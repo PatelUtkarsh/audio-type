@@ -1,0 +1,68 @@
+# Xcode
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+DerivedData/
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+*.moved-aside
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+xcuserdata/
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Packages/
+Package.resolved
+
+# Build outputs
+build/
+*.a
+*.dylib
+*.o
+
+# Models (downloaded separately)
+Models/*.bin
+Models/*.mlmodelc/
+*.ggml
+ggml-*.bin
+
+# whisper.cpp build artifacts
+whisper.cpp/build/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+.vscode/
+
+# Archives
+*.zip
+*.dmg
+*.pkg
+*.app
+
+# Secrets
+*.pem
+*.p12
+*.p8
+*.mobileprovision
+
+# Logs
+*.log
