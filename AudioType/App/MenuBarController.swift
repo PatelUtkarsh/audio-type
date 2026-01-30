@@ -96,8 +96,7 @@ class MenuBarController: NSObject {
 
   private func updateStatusMenuItem(_ text: String) {
     if let menu = statusItem?.menu,
-      let item = menu.item(withTag: 100)
-    {
+      let item = menu.item(withTag: 100) {
       item.title = text
     }
   }

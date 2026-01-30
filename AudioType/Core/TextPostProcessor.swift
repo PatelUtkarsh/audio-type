@@ -100,7 +100,7 @@ class TextPostProcessor {
     "open bracket": "[",
     "close bracket": "]",
     "open brace": "{",
-    "close brace": "}",
+    "close brace": "}"
   ]
 
   // User-defined custom replacements
@@ -172,8 +172,7 @@ class TextPostProcessor {
 
   private func loadCustomReplacements() {
     if let data = UserDefaults.standard.data(forKey: "customWordReplacements"),
-      let replacements = try? JSONDecoder().decode([String: String].self, from: data)
-    {
+      let replacements = try? JSONDecoder().decode([String: String].self, from: data) {
       customReplacements = replacements
     }
   }
