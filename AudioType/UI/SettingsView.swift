@@ -4,22 +4,51 @@ import SwiftUI
 
 struct SettingsView: View {
   @AppStorage("launchAtLogin") private var launchAtLogin = false
-  @AppStorage("selectedModel") private var selectedModel = "base.en"
+  @State private var selectedModel: WhisperModel = WhisperModel.current
+  @State private var isDownloading = false
+  @State private var downloadError: String?
 
   var body: some View {
     Form {
       Section {
         LabeledContent("Hotkey") {
-          Text("Cmd + Shift + Space")
+          Text(TranscriptionManager.shared.currentHotkey.displayName)
             .foregroundColor(.secondary)
         }
 
         Picker("Model", selection: $selectedModel) {
-          Text("Tiny (75 MB) - Fastest").tag("tiny.en")
-          Text("Base (142 MB) - Recommended").tag("base.en")
-          Text("Small (466 MB) - Better accuracy").tag("small.en")
+          ForEach(WhisperModel.allCases, id: \.self) { model in
+            HStack {
+              Text(model.displayName)
+              if WhisperEngine.isModelDownloaded(model) {
+                Image(systemName: "checkmark.circle.fill")
+                  .foregroundColor(.green)
+                  .font(.caption)
+              }
+            }
+            .tag(model)
+          }
         }
         .pickerStyle(.menu)
+        .onChange(of: selectedModel) { newModel in
+          handleModelChange(newModel)
+        }
+        .disabled(isDownloading)
+
+        if isDownloading {
+          HStack {
+            ProgressView()
+              .scaleEffect(0.8)
+            Text("Downloading model...")
+              .foregroundColor(.secondary)
+          }
+        }
+
+        if let error = downloadError {
+          Text(error)
+            .foregroundColor(.red)
+            .font(.caption)
+        }
       } header: {
         Text("Transcription")
       }
@@ -57,7 +86,7 @@ struct SettingsView: View {
         HStack {
           Text("Version")
           Spacer()
-          Text("1.0.0")
+          Text("1.1.0")
             .foregroundColor(.secondary)
         }
 
@@ -67,7 +96,39 @@ struct SettingsView: View {
       }
     }
     .formStyle(.grouped)
-    .frame(width: 400, height: 350)
+    .frame(width: 400, height: 400)
+  }
+
+  private func handleModelChange(_ newModel: WhisperModel) {
+    downloadError = nil
+
+    // Check if model is already downloaded
+    if WhisperEngine.isModelDownloaded(newModel) {
+      WhisperModel.current = newModel
+      // Notify to reload engine
+      NotificationCenter.default.post(name: .modelChanged, object: newModel)
+      return
+    }
+
+    // Need to download
+    isDownloading = true
+    Task {
+      do {
+        try await WhisperEngine.downloadModelFile(newModel)
+        await MainActor.run {
+          isDownloading = false
+          WhisperModel.current = newModel
+          NotificationCenter.default.post(name: .modelChanged, object: newModel)
+        }
+      } catch {
+        await MainActor.run {
+          isDownloading = false
+          downloadError = "Failed to download: \(error.localizedDescription)"
+          // Revert selection
+          selectedModel = WhisperModel.current
+        }
+      }
+    }
   }
 
   private func checkMicrophonePermission() -> Bool {
@@ -85,6 +146,10 @@ struct SettingsView: View {
       print("Failed to set launch at login: \(error)")
     }
   }
+}
+
+extension Notification.Name {
+  static let modelChanged = Notification.Name("modelChanged")
 }
 
 struct PermissionStatusView: View {

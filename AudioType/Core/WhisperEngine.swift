@@ -2,10 +2,54 @@ import Foundation
 import WhisperWrapper
 import os.log
 
+enum WhisperModel: String, CaseIterable {
+  case tiny = "tiny.en"
+  case base = "base.en"
+  case small = "small.en"
+  case medium = "medium.en"
+
+  var displayName: String {
+    switch self {
+    case .tiny: return "Tiny (fastest, ~75MB)"
+    case .base: return "Base (fast, ~142MB)"
+    case .small: return "Small (balanced, ~466MB)"
+    case .medium: return "Medium (accurate, ~1.5GB)"
+    }
+  }
+
+  var fileName: String {
+    return "ggml-\(rawValue).bin"
+  }
+
+  var downloadSize: String {
+    switch self {
+    case .tiny: return "75 MB"
+    case .base: return "142 MB"
+    case .small: return "466 MB"
+    case .medium: return "1.5 GB"
+    }
+  }
+
+  static var current: WhisperModel {
+    get {
+      if let saved = UserDefaults.standard.string(forKey: "whisperModel"),
+        let model = WhisperModel(rawValue: saved)
+      {
+        return model
+      }
+      return .small  // Default
+    }
+    set {
+      UserDefaults.standard.set(newValue.rawValue, forKey: "whisperModel")
+    }
+  }
+}
+
 enum WhisperEngineError: Error, LocalizedError {
   case modelNotFound
   case cliNotFound
   case transcriptionFailed(String)
+  case downloadFailed(String)
 
   var errorDescription: String? {
     switch self {
@@ -15,6 +59,8 @@ enum WhisperEngineError: Error, LocalizedError {
       return "whisper-cli not found. Run Scripts/build-whisper.sh first."
     case .transcriptionFailed(let message):
       return "Transcription failed: \(message)"
+    case .downloadFailed(let message):
+      return "Model download failed: \(message)"
     }
   }
 }
@@ -22,16 +68,20 @@ enum WhisperEngineError: Error, LocalizedError {
 class WhisperEngine {
   private var wrapper: WhisperWrapper?
   private let logger = Logger(subsystem: "com.audiotype", category: "WhisperEngine")
+  private(set) var currentModel: WhisperModel
 
-  private init(wrapper: WhisperWrapper) {
+  private init(wrapper: WhisperWrapper, model: WhisperModel) {
     self.wrapper = wrapper
+    self.currentModel = model
   }
 
   deinit {
     wrapper = nil
   }
 
-  static func load() async throws -> WhisperEngine {
+  static func load(model: WhisperModel? = nil) async throws -> WhisperEngine {
+    let selectedModel = model ?? WhisperModel.current
+
     // First, build whisper-cli if needed
     try await buildWhisperCliIfNeeded()
 
@@ -42,12 +92,28 @@ class WhisperEngine {
     }
 
     // Ensure model exists
-    let modelPath = try await ensureModelExists()
+    let modelPath = try await ensureModelExists(model: selectedModel)
 
     // Create wrapper
     let wrapper = WhisperWrapper(modelPath: modelPath, whisperCliPath: cliPath)
 
-    return WhisperEngine(wrapper: wrapper)
+    return WhisperEngine(wrapper: wrapper, model: selectedModel)
+  }
+
+  /// Check if a specific model is downloaded
+  static func isModelDownloaded(_ model: WhisperModel) -> Bool {
+    let modelsDir = getModelsDirectory()
+    let modelPath = modelsDir.appendingPathComponent(model.fileName)
+    return FileManager.default.fileExists(atPath: modelPath.path)
+  }
+
+  /// Download a specific model
+  static func downloadModelFile(
+    _ model: WhisperModel,
+    progress: ((Double) -> Void)? = nil
+  ) async throws {
+    let modelsDir = getModelsDirectory()
+    try await downloadModel(name: model.rawValue, to: modelsDir, progress: progress)
   }
 
   func transcribe(samples: [Float]) throws -> String {
@@ -123,10 +189,9 @@ class WhisperEngine {
     print("Note: whisper-cli not found. Run ./Scripts/build-whisper.sh to build it.")
   }
 
-  private static func ensureModelExists() async throws -> String {
-    let modelName = "ggml-small.en.bin"
+  private static func ensureModelExists(model: WhisperModel) async throws -> String {
     let modelsDir = getModelsDirectory()
-    let modelPath = modelsDir.appendingPathComponent(modelName)
+    let modelPath = modelsDir.appendingPathComponent(model.fileName)
 
     // Check if model exists
     if FileManager.default.fileExists(atPath: modelPath.path) {
@@ -134,7 +199,7 @@ class WhisperEngine {
     }
 
     // Download model
-    try await downloadModel(name: "small.en", to: modelsDir)
+    try await downloadModel(name: model.rawValue, to: modelsDir, progress: nil)
 
     guard FileManager.default.fileExists(atPath: modelPath.path) else {
       throw WhisperEngineError.modelNotFound
@@ -154,19 +219,25 @@ class WhisperEngine {
     return modelsDir
   }
 
-  private static func downloadModel(name: String, to directory: URL) async throws {
+  private static func downloadModel(
+    name: String,
+    to directory: URL,
+    progress: ((Double) -> Void)?
+  ) async throws {
     let modelURL = URL(
       string: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-\(name).bin")!
     let destinationURL = directory.appendingPathComponent("ggml-\(name).bin")
 
     print("Downloading model from \(modelURL.absoluteString)...")
 
+    // Use URLSession with delegate for progress tracking
     let (tempURL, response) = try await URLSession.shared.download(from: modelURL)
 
     guard let httpResponse = response as? HTTPURLResponse,
       httpResponse.statusCode == 200
     else {
-      throw WhisperEngineError.modelNotFound
+      let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+      throw WhisperEngineError.downloadFailed("HTTP \(statusCode)")
     }
 
     // Move downloaded file to destination

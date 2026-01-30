@@ -33,7 +33,30 @@ class TranscriptionManager: ObservableObject {
 
   private let logger = Logger(subsystem: "com.audiotype", category: "TranscriptionManager")
 
-  private init() {}
+  private init() {
+    // Listen for model changes
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(handleModelChanged),
+      name: .modelChanged,
+      object: nil
+    )
+  }
+
+  @objc private func handleModelChanged(_ notification: Notification) {
+    guard let model = notification.object as? WhisperModel else { return }
+    logger.info("Model changed to: \(model.displayName)")
+
+    // Reload whisper engine with new model
+    Task {
+      do {
+        whisperEngine = try await WhisperEngine.load(model: model)
+        logger.info("Whisper engine reloaded with \(model.displayName)")
+      } catch {
+        logger.error("Failed to reload whisper engine: \(error.localizedDescription)")
+      }
+    }
+  }
 
   func initialize() async {
     logger.info("Initializing TranscriptionManager...")
