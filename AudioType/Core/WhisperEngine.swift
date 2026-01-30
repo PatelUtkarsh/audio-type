@@ -67,7 +67,7 @@ class WhisperEngine {
   private static func findWhisperCli() -> String {
     let projectDir = getProjectDirectory()
     let bundlePath = Bundle.main.bundlePath + "/Contents/MacOS/whisper-cli"
-    
+
     let locations = [
       // App bundle (for distributed app)
       bundlePath,

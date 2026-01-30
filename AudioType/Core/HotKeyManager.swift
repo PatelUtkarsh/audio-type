@@ -143,7 +143,9 @@ class HotKeyManager {
 
     // Debug: print all flag changes
     if type == .flagsChanged {
-      print("DEBUG flagsChanged: fn=\(fnPressed) cmd=\(hasCommand) shift=\(hasShift) opt=\(hasOption) ctrl=\(hasControl) rawFlags=\(flags.rawValue)")
+      print(
+        "DEBUG flagsChanged: fn=\(fnPressed) cmd=\(hasCommand) shift=\(hasShift) opt=\(hasOption) ctrl=\(hasControl) rawFlags=\(flags.rawValue)"
+      )
     }
 
     switch currentTrigger {

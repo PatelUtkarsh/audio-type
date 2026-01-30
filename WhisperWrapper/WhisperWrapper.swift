@@ -30,7 +30,8 @@ public class WhisperWrapper {
   private func runWhisperCli(wavPath: String) throws -> String {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: whisperCliPath)
-    process.currentDirectoryURL = FileManager.default.temporaryDirectory  // Avoid accessing Documents
+    // Use temp directory to avoid Documents folder permission prompts
+    process.currentDirectoryURL = FileManager.default.temporaryDirectory
     process.arguments = [
       "-m", modelPath,
       "-f", wavPath,
@@ -87,8 +88,10 @@ public class WhisperWrapper {
 
     // fmt chunk
     data.append(contentsOf: "fmt ".utf8)
-    data.append(contentsOf: withUnsafeBytes(of: UInt32(16).littleEndian) { Array($0) })  // chunk size
-    data.append(contentsOf: withUnsafeBytes(of: UInt16(1).littleEndian) { Array($0) })  // audio format (PCM)
+    // chunk size
+    data.append(contentsOf: withUnsafeBytes(of: UInt32(16).littleEndian) { Array($0) })
+    // audio format (PCM)
+    data.append(contentsOf: withUnsafeBytes(of: UInt16(1).littleEndian) { Array($0) })
     data.append(contentsOf: withUnsafeBytes(of: numChannels.littleEndian) { Array($0) })
     data.append(contentsOf: withUnsafeBytes(of: UInt32(sampleRate).littleEndian) { Array($0) })
     data.append(contentsOf: withUnsafeBytes(of: byteRate.littleEndian) { Array($0) })

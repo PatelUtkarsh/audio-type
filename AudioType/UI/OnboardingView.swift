@@ -5,7 +5,7 @@ struct OnboardingView: View {
   @State private var microphoneGranted = false
   @State private var accessibilityGranted = false
   @State private var hasAutoCompleted = false
-  
+
   let timer = Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
 
   let onComplete: () -> Void
@@ -71,7 +71,7 @@ struct OnboardingView: View {
       // Continuously check permissions
       microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
       accessibilityGranted = Permissions.checkAccessibility()
-      
+
       // Auto-complete when both are granted
       if microphoneGranted && accessibilityGranted && !hasAutoCompleted {
         hasAutoCompleted = true
