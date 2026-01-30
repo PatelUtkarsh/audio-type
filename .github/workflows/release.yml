@@ -1,0 +1,138 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 1.0.0)'
+        required: true
+        default: '1.0.0'
+
+jobs:
+  build:
+    runs-on: macos-14
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install dependencies
+        run: |
+          brew install cmake
+
+      - name: Build whisper.cpp
+        run: |
+          cd whisper.cpp
+          mkdir -p build
+          cd build
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_METAL=ON \
+            -DWHISPER_BUILD_EXAMPLES=ON
+          cmake --build . --config Release -j$(sysctl -n hw.ncpu)
+
+      - name: Build AudioType
+        run: |
+          swift build -c release
+
+      - name: Create app bundle
+        run: |
+          mkdir -p AudioType.app/Contents/MacOS AudioType.app/Contents/Resources
+          
+          # Copy main binary
+          cp .build/release/AudioType AudioType.app/Contents/MacOS/
+          
+          # Copy whisper-cli and dylibs
+          cp whisper.cpp/build/bin/whisper-cli AudioType.app/Contents/MacOS/
+          cp whisper.cpp/build/src/libwhisper.1.dylib AudioType.app/Contents/MacOS/
+          cp whisper.cpp/build/ggml/src/libggml.0.dylib AudioType.app/Contents/MacOS/
+          cp whisper.cpp/build/ggml/src/libggml-base.0.dylib AudioType.app/Contents/MacOS/
+          cp whisper.cpp/build/ggml/src/libggml-cpu.0.dylib AudioType.app/Contents/MacOS/
+          cp whisper.cpp/build/ggml/src/ggml-blas/libggml-blas.0.dylib AudioType.app/Contents/MacOS/
+          cp whisper.cpp/build/ggml/src/ggml-metal/libggml-metal.0.dylib AudioType.app/Contents/MacOS/
+          
+          # Copy Metal shaders
+          cp whisper.cpp/build/bin/ggml-metal.metal AudioType.app/Contents/MacOS/ 2>/dev/null || true
+          cp whisper.cpp/build/bin/ggml-common.h AudioType.app/Contents/MacOS/ 2>/dev/null || true
+          
+          # Copy Info.plist
+          cp Resources/Info.plist AudioType.app/Contents/Info.plist
+          
+          # Fix library paths
+          install_name_tool -change @rpath/libwhisper.1.dylib @executable_path/libwhisper.1.dylib AudioType.app/Contents/MacOS/whisper-cli
+          install_name_tool -change @rpath/libggml.0.dylib @executable_path/libggml.0.dylib AudioType.app/Contents/MacOS/whisper-cli
+          install_name_tool -change @rpath/libggml-cpu.0.dylib @executable_path/libggml-cpu.0.dylib AudioType.app/Contents/MacOS/whisper-cli
+          install_name_tool -change @rpath/libggml-blas.0.dylib @executable_path/libggml-blas.0.dylib AudioType.app/Contents/MacOS/whisper-cli
+          install_name_tool -change @rpath/libggml-metal.0.dylib @executable_path/libggml-metal.0.dylib AudioType.app/Contents/MacOS/whisper-cli
+          install_name_tool -change @rpath/libggml-base.0.dylib @executable_path/libggml-base.0.dylib AudioType.app/Contents/MacOS/whisper-cli
+          
+          # Fix dylib inter-dependencies
+          install_name_tool -change @rpath/libggml-base.0.dylib @executable_path/libggml-base.0.dylib AudioType.app/Contents/MacOS/libwhisper.1.dylib
+          install_name_tool -change @rpath/libggml.0.dylib @executable_path/libggml.0.dylib AudioType.app/Contents/MacOS/libwhisper.1.dylib
+          install_name_tool -change @rpath/libggml-base.0.dylib @executable_path/libggml-base.0.dylib AudioType.app/Contents/MacOS/libggml.0.dylib
+          install_name_tool -change @rpath/libggml-base.0.dylib @executable_path/libggml-base.0.dylib AudioType.app/Contents/MacOS/libggml-cpu.0.dylib
+          install_name_tool -change @rpath/libggml-base.0.dylib @executable_path/libggml-base.0.dylib AudioType.app/Contents/MacOS/libggml-blas.0.dylib
+          install_name_tool -change @rpath/libggml-base.0.dylib @executable_path/libggml-base.0.dylib AudioType.app/Contents/MacOS/libggml-metal.0.dylib
+          
+          # Sign the app
+          codesign --force --deep --sign - AudioType.app
+
+      - name: Create DMG
+        run: |
+          # Create a temporary directory for DMG contents
+          mkdir -p dmg_contents
+          cp -R AudioType.app dmg_contents/
+          ln -s /Applications dmg_contents/Applications
+          
+          # Create DMG
+          hdiutil create -volname "AudioType" -srcfolder dmg_contents -ov -format UDZO AudioType.dmg
+
+      - name: Create ZIP
+        run: |
+          zip -r AudioType.zip AudioType.app
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: AudioType v${{ steps.version.outputs.version }}
+          body: |
+            ## AudioType v${{ steps.version.outputs.version }}
+            
+            Voice-to-text for macOS using Whisper AI.
+            
+            ### Installation
+            1. Download `AudioType.dmg` or `AudioType.zip`
+            2. Extract and move `AudioType.app` to your Applications folder
+            3. Open the app and grant Microphone and Accessibility permissions
+            4. Hold the fn key (or your configured hotkey) to dictate
+            
+            ### Requirements
+            - macOS 13.0 or later
+            - Apple Silicon or Intel Mac
+          files: |
+            AudioType.dmg
+            AudioType.zip
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
