@@ -33,8 +33,7 @@ enum WhisperModel: String, CaseIterable {
   static var current: WhisperModel {
     get {
       if let saved = UserDefaults.standard.string(forKey: "whisperModel"),
-        let model = WhisperModel(rawValue: saved)
-      {
+        let model = WhisperModel(rawValue: saved) {
         return model
       }
       return .small  // Default
@@ -141,14 +140,12 @@ class WhisperEngine {
       projectDir + "/whisper.cpp/build/bin/whisper-cli",
       "./whisper.cpp/build/bin/whisper-cli",
       "/opt/homebrew/bin/whisper-cli",
-      "/usr/local/bin/whisper-cli",
+      "/usr/local/bin/whisper-cli"
     ]
 
-    for location in locations {
-      if FileManager.default.isExecutableFile(atPath: location) {
-        print("Found whisper-cli at: \(location)")
-        return location
-      }
+    for location in locations where FileManager.default.isExecutableFile(atPath: location) {
+      print("Found whisper-cli at: \(location)")
+      return location
     }
 
     print("whisper-cli not found. Checked: \(locations)")

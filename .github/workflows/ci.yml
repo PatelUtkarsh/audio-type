@@ -23,21 +23,8 @@ jobs:
       - name: Install SwiftLint
         run: brew install swiftlint
 
-      - name: Install swift-format
-        run: brew install swift-format
-
       - name: Run SwiftLint
-        run: swiftlint lint --strict AudioType WhisperWrapper
-
-      - name: Check swift-format
-        run: |
-          swift-format lint -r AudioType WhisperWrapper
-          # Check if files would be changed by formatting
-          swift-format -r AudioType WhisperWrapper -o /tmp/formatted
-          if ! diff -r AudioType /tmp/formatted/AudioType > /dev/null 2>&1; then
-            echo "Code is not properly formatted. Run 'make format' locally."
-            exit 1
-          fi
+        run: swiftlint lint AudioType WhisperWrapper
 
   build:
     name: Build

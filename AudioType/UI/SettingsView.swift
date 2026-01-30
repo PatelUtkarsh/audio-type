@@ -4,7 +4,7 @@ import SwiftUI
 
 struct SettingsView: View {
   @AppStorage("launchAtLogin") private var launchAtLogin = false
-  @State private var selectedModel: WhisperModel = WhisperModel.current
+  @State private var selectedModel = WhisperModel.current
   @State private var isDownloading = false
   @State private var downloadError: String?
 

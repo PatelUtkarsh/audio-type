@@ -58,8 +58,7 @@ class AudioRecorder {
     }
 
     // Install tap on input node
-    inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) {
-      [weak self] buffer, time in
+    inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
       self?.processAudioBuffer(buffer, converter: converter, targetFormat: targetFormat)
     }
 
@@ -114,7 +113,7 @@ class AudioRecorder {
       }
 
       var error: NSError?
-      let inputBlock: AVAudioConverterInputBlock = { inNumPackets, outStatus in
+      let inputBlock: AVAudioConverterInputBlock = { _, outStatus in
         outStatus.pointee = .haveData
         return buffer
       }

@@ -40,7 +40,7 @@ public class WhisperWrapper {
       "--no-prints",  // Suppress progress output
       "-t", "4",  // Use 4 threads
       "--beam-size", "1",  // Faster decoding with greedy search
-      "--best-of", "1",  // Don't sample multiple times
+      "--best-of", "1"  // Don't sample multiple times
     ]
 
     let outputPipe = Pipe()
@@ -119,13 +119,11 @@ public class WhisperWrapper {
       Bundle.main.bundlePath + "/Contents/MacOS/whisper-cli",
       // Homebrew
       "/opt/homebrew/bin/whisper-cli",
-      "/usr/local/bin/whisper-cli",
+      "/usr/local/bin/whisper-cli"
     ]
 
-    for location in locations {
-      if FileManager.default.fileExists(atPath: location) {
-        return location
-      }
+    for location in locations where FileManager.default.fileExists(atPath: location) {
+      return location
     }
 
     // Default to bundled location
