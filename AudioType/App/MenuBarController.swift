@@ -145,7 +145,7 @@ class MenuBarController: NSObject {
   private func showRecordingIndicator() {
     if recordingWindow == nil {
       let window = NSWindow(
-        contentRect: NSRect(x: 0, y: 0, width: 200, height: 60),
+        contentRect: NSRect(x: 0, y: 0, width: 180, height: 50),
         styleMask: [.borderless],
         backing: .buffered,
         defer: false
@@ -154,21 +154,31 @@ class MenuBarController: NSObject {
       window.backgroundColor = .clear
       window.isOpaque = false
       window.hasShadow = true
-      window.contentView = NSHostingView(rootView: RecordingOverlay(text: "Recording..."))
 
-      // Position near mouse cursor
-      let mouseLocation = NSEvent.mouseLocation
-      window.setFrameOrigin(NSPoint(x: mouseLocation.x - 100, y: mouseLocation.y + 20))
+      // Position at bottom center of screen
+      if let screen = NSScreen.main {
+        let screenFrame = screen.visibleFrame
+        let windowWidth: CGFloat = 180
+        let x = screenFrame.origin.x + (screenFrame.width - windowWidth) / 2
+        let y = screenFrame.origin.y + 100  // 100px from bottom
+        window.setFrameOrigin(NSPoint(x: x, y: y))
+      }
 
       recordingWindow = window
     }
 
+    // Always update content to "Recording..." when showing
+    let hostingView = NSHostingView(rootView: RecordingOverlay(text: "Recording..."))
+    hostingView.frame = NSRect(x: 0, y: 0, width: 180, height: 50)
+    recordingWindow?.contentView = hostingView
     recordingWindow?.orderFront(nil)
   }
 
   private func updateRecordingIndicator(text: String) {
     if let window = recordingWindow {
-      window.contentView = NSHostingView(rootView: RecordingOverlay(text: text))
+      let hostingView = NSHostingView(rootView: RecordingOverlay(text: text))
+      hostingView.frame = NSRect(x: 0, y: 0, width: 180, height: 50)
+      window.contentView = hostingView
     }
   }
 

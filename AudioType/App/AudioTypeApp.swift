@@ -16,6 +16,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   private var statusItem: NSStatusItem!
   private var menuBarController: MenuBarController!
   private var transcriptionManager: TranscriptionManager!
+  private var onboardingWindow: NSWindow?
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     // Hide dock icon
@@ -63,11 +64,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     )
     window.title = "Welcome to AudioType"
     window.center()
+    window.isReleasedWhenClosed = false
+
+    // Retain the window
+    self.onboardingWindow = window
+
     window.contentView = NSHostingView(
-      rootView: OnboardingView {
-        window.close()
+      rootView: OnboardingView { [weak self] in
+        // Delay to let animations complete before releasing
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+          self?.onboardingWindow?.orderOut(nil)
+          self?.onboardingWindow = nil
+        }
         Task {
-          await self.transcriptionManager.initialize()
+          await self?.transcriptionManager.initialize()
         }
       })
     window.makeKeyAndOrderFront(nil)

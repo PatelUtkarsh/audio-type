@@ -2,11 +2,11 @@ import AVFoundation
 import SwiftUI
 
 struct OnboardingView: View {
-  @State private var step = 0
   @State private var microphoneGranted = false
   @State private var accessibilityGranted = false
-  @State private var isDownloadingModel = false
-  @State private var downloadProgress: Double = 0
+  @State private var hasAutoCompleted = false
+  
+  let timer = Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
 
   let onComplete: () -> Void
 
@@ -54,27 +54,29 @@ struct OnboardingView: View {
 
       // Continue Button
       Button(action: completeOnboarding) {
-        if isDownloadingModel {
-          HStack {
-            ProgressView()
-              .scaleEffect(0.8)
-            Text("Downloading model...")
-          }
+        Text(canContinue ? "Get Started" : "Grant Permissions")
           .frame(maxWidth: .infinity)
-        } else {
-          Text(canContinue ? "Get Started" : "Grant Permissions")
-            .frame(maxWidth: .infinity)
-        }
       }
       .buttonStyle(.borderedProminent)
       .controlSize(.large)
-      .disabled(!canContinue || isDownloadingModel)
+      .disabled(!canContinue)
       .padding(.horizontal)
       .padding(.bottom)
     }
     .frame(width: 400, height: 380)
     .onAppear {
       checkPermissions()
+    }
+    .onReceive(timer) { _ in
+      // Continuously check permissions
+      microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+      accessibilityGranted = Permissions.checkAccessibility()
+      
+      // Auto-complete when both are granted
+      if microphoneGranted && accessibilityGranted && !hasAutoCompleted {
+        hasAutoCompleted = true
+        onComplete()
+      }
     }
   }
 
@@ -95,14 +97,6 @@ struct OnboardingView: View {
 
   private func requestAccessibility() {
     Permissions.openAccessibilitySettings()
-
-    // Poll for accessibility permission
-    Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { timer in
-      if Permissions.checkAccessibility() {
-        accessibilityGranted = true
-        timer.invalidate()
-      }
-    }
   }
 
   private func completeOnboarding() {

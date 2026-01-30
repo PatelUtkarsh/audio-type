@@ -30,12 +30,16 @@ public class WhisperWrapper {
   private func runWhisperCli(wavPath: String) throws -> String {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: whisperCliPath)
+    process.currentDirectoryURL = FileManager.default.temporaryDirectory  // Avoid accessing Documents
     process.arguments = [
       "-m", modelPath,
       "-f", wavPath,
       "-l", "en",  // English language
       "-nt",  // No timestamps
       "--no-prints",  // Suppress progress output
+      "-t", "4",  // Use 4 threads
+      "--beam-size", "1",  // Faster decoding with greedy search
+      "--best-of", "1",  // Don't sample multiple times
     ]
 
     let outputPipe = Pipe()

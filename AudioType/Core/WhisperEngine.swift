@@ -66,7 +66,12 @@ class WhisperEngine {
 
   private static func findWhisperCli() -> String {
     let projectDir = getProjectDirectory()
+    let bundlePath = Bundle.main.bundlePath + "/Contents/MacOS/whisper-cli"
+    
     let locations = [
+      // App bundle (for distributed app)
+      bundlePath,
+      // Development paths
       projectDir + "/whisper.cpp/build/bin/whisper-cli",
       "./whisper.cpp/build/bin/whisper-cli",
       "/opt/homebrew/bin/whisper-cli",
@@ -75,11 +80,13 @@ class WhisperEngine {
 
     for location in locations {
       if FileManager.default.isExecutableFile(atPath: location) {
+        print("Found whisper-cli at: \(location)")
         return location
       }
     }
 
-    return locations[0]  // Default to first option
+    print("whisper-cli not found. Checked: \(locations)")
+    return bundlePath  // Default to bundle location
   }
 
   private static func getProjectDirectory() -> String {
@@ -117,7 +124,7 @@ class WhisperEngine {
   }
 
   private static func ensureModelExists() async throws -> String {
-    let modelName = "ggml-base.en.bin"
+    let modelName = "ggml-small.en.bin"
     let modelsDir = getModelsDirectory()
     let modelPath = modelsDir.appendingPathComponent(modelName)
 
@@ -127,7 +134,7 @@ class WhisperEngine {
     }
 
     // Download model
-    try await downloadModel(name: "base.en", to: modelsDir)
+    try await downloadModel(name: "small.en", to: modelsDir)
 
     guard FileManager.default.fileExists(atPath: modelPath.path) else {
       throw WhisperEngineError.modelNotFound

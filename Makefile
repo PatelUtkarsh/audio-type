@@ -37,7 +37,32 @@ app: build
 	@mkdir -p AudioType.app/Contents/MacOS AudioType.app/Contents/Resources
 	@cp .build/debug/AudioType AudioType.app/Contents/MacOS/
 	@cp whisper.cpp/build/bin/whisper-cli AudioType.app/Contents/MacOS/
+	@# Copy dylibs
+	@cp whisper.cpp/build/src/libwhisper.1.dylib AudioType.app/Contents/MacOS/
+	@cp whisper.cpp/build/ggml/src/libggml.0.dylib AudioType.app/Contents/MacOS/
+	@cp whisper.cpp/build/ggml/src/libggml-base.0.dylib AudioType.app/Contents/MacOS/
+	@cp whisper.cpp/build/ggml/src/libggml-cpu.0.dylib AudioType.app/Contents/MacOS/
+	@cp whisper.cpp/build/ggml/src/ggml-blas/libggml-blas.0.dylib AudioType.app/Contents/MacOS/
+	@cp whisper.cpp/build/ggml/src/ggml-metal/libggml-metal.0.dylib AudioType.app/Contents/MacOS/
+	@cp whisper.cpp/build/bin/ggml-metal.metal AudioType.app/Contents/MacOS/ 2>/dev/null || true
+	@cp whisper.cpp/build/bin/ggml-common.h AudioType.app/Contents/MacOS/ 2>/dev/null || true
+	@# Fix library paths to use @executable_path
+	@install_name_tool -change @rpath/libwhisper.1.dylib @executable_path/libwhisper.1.dylib AudioType.app/Contents/MacOS/whisper-cli 2>/dev/null || true
+	@install_name_tool -change @rpath/libggml.0.dylib @executable_path/libggml.0.dylib AudioType.app/Contents/MacOS/whisper-cli 2>/dev/null || true
+	@install_name_tool -change @rpath/libggml-cpu.0.dylib @executable_path/libggml-cpu.0.dylib AudioType.app/Contents/MacOS/whisper-cli 2>/dev/null || true
+	@install_name_tool -change @rpath/libggml-blas.0.dylib @executable_path/libggml-blas.0.dylib AudioType.app/Contents/MacOS/whisper-cli 2>/dev/null || true
+	@install_name_tool -change @rpath/libggml-metal.0.dylib @executable_path/libggml-metal.0.dylib AudioType.app/Contents/MacOS/whisper-cli 2>/dev/null || true
+	@install_name_tool -change @rpath/libggml-base.0.dylib @executable_path/libggml-base.0.dylib AudioType.app/Contents/MacOS/whisper-cli 2>/dev/null || true
+	@# Fix dylib inter-dependencies
+	@install_name_tool -change @rpath/libggml-base.0.dylib @executable_path/libggml-base.0.dylib AudioType.app/Contents/MacOS/libwhisper.1.dylib 2>/dev/null || true
+	@install_name_tool -change @rpath/libggml.0.dylib @executable_path/libggml.0.dylib AudioType.app/Contents/MacOS/libwhisper.1.dylib 2>/dev/null || true
+	@install_name_tool -change @rpath/libggml-base.0.dylib @executable_path/libggml-base.0.dylib AudioType.app/Contents/MacOS/libggml.0.dylib 2>/dev/null || true
+	@install_name_tool -change @rpath/libggml-base.0.dylib @executable_path/libggml-base.0.dylib AudioType.app/Contents/MacOS/libggml-cpu.0.dylib 2>/dev/null || true
+	@install_name_tool -change @rpath/libggml-base.0.dylib @executable_path/libggml-base.0.dylib AudioType.app/Contents/MacOS/libggml-blas.0.dylib 2>/dev/null || true
+	@install_name_tool -change @rpath/libggml-base.0.dylib @executable_path/libggml-base.0.dylib AudioType.app/Contents/MacOS/libggml-metal.0.dylib 2>/dev/null || true
 	@cp Resources/Info.plist AudioType.app/Contents/Info.plist
+	@# Sign the bundle
+	@codesign --force --deep --sign - AudioType.app 2>/dev/null || true
 	@echo "App bundle created: AudioType.app"
 
 # Download whisper model

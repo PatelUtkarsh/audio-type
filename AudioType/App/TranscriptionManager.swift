@@ -141,10 +141,11 @@ class TranscriptionManager: ObservableObject {
       let elapsed = CFAbsoluteTimeGetCurrent() - startTime
       logger.info("Transcription completed in \(elapsed, format: .fixed(precision: 2))s: \(text)")
 
-      // Insert text
+      // Insert text with trailing space
       await MainActor.run {
-        if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-          self.textInserter?.insertText(text.trimmingCharacters(in: .whitespacesAndNewlines))
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedText.isEmpty {
+          self.textInserter?.insertText(trimmedText + " ")
         }
         self.setState(.idle)
       }
