@@ -24,7 +24,8 @@ class MenuBarController: NSObject {
     self.statusItem = statusItem
 
     if let button = statusItem.button {
-      button.image = NSImage(systemSymbolName: "mic.fill", accessibilityDescription: "AudioType")
+      button.image = NSImage(
+        systemSymbolName: "waveform.circle.fill", accessibilityDescription: "AudioType")
       button.image?.isTemplate = true
     }
 
@@ -68,13 +69,14 @@ class MenuBarController: NSObject {
 
     switch state {
     case .idle:
-      button.image = NSImage(systemSymbolName: "mic.fill", accessibilityDescription: "Ready")
+      button.image = NSImage(
+        systemSymbolName: "waveform.circle.fill", accessibilityDescription: "Ready")
       hideRecordingIndicator()
       updateStatusMenuItem("Ready")
 
     case .recording:
       button.image = NSImage(
-        systemSymbolName: "record.circle.fill", accessibilityDescription: "Recording")
+        systemSymbolName: "waveform.circle.fill", accessibilityDescription: "Recording")
       showRecordingIndicator()
       updateStatusMenuItem("Recording...")
 
