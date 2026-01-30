@@ -24,5 +24,7 @@
     <string>AudioType needs microphone access to transcribe your speech.</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
 </dict>
 </plist>

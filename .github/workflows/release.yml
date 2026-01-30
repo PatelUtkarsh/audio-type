@@ -88,8 +88,9 @@ jobs:
           cp whisper.cpp/build/bin/ggml-metal.metal AudioType.app/Contents/MacOS/ 2>/dev/null || true
           cp whisper.cpp/build/bin/ggml-common.h AudioType.app/Contents/MacOS/ 2>/dev/null || true
           
-          # Copy Info.plist
+          # Copy Info.plist and icon
           cp Resources/Info.plist AudioType.app/Contents/Info.plist
+          cp Resources/AppIcon.icns AudioType.app/Contents/Resources/
           
           # Fix library paths
           install_name_tool -change @rpath/libwhisper.1.dylib @executable_path/libwhisper.1.dylib AudioType.app/Contents/MacOS/whisper-cli

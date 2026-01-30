@@ -61,6 +61,7 @@ app: build
 	@install_name_tool -change @rpath/libggml-base.0.dylib @executable_path/libggml-base.0.dylib AudioType.app/Contents/MacOS/libggml-blas.0.dylib 2>/dev/null || true
 	@install_name_tool -change @rpath/libggml-base.0.dylib @executable_path/libggml-base.0.dylib AudioType.app/Contents/MacOS/libggml-metal.0.dylib 2>/dev/null || true
 	@cp Resources/Info.plist AudioType.app/Contents/Info.plist
+	@cp Resources/AppIcon.icns AudioType.app/Contents/Resources/
 	@# Sign the bundle
 	@codesign --force --deep --sign - AudioType.app 2>/dev/null || true
 	@echo "App bundle created: AudioType.app"
