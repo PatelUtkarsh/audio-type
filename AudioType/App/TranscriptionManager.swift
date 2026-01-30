@@ -94,15 +94,6 @@ class TranscriptionManager: ObservableObject {
     audioRecorder = nil
   }
 
-  var currentHotkey: HotKeyTrigger {
-    hotKeyManager?.currentTrigger ?? .fnKey
-  }
-
-  func setHotkey(_ trigger: HotKeyTrigger) {
-    hotKeyManager?.currentTrigger = trigger
-    logger.info("Hotkey changed to: \(trigger.displayName)")
-  }
-
   private func handleHotKeyEvent(_ event: HotKeyEvent) {
     switch event {
     case .keyDown:

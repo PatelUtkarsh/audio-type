@@ -5,7 +5,7 @@ class MenuBarController: NSObject {
   private weak var statusItem: NSStatusItem?
   private var transcriptionManager: TranscriptionManager
   private var recordingWindow: NSWindow?
-  private var hotkeyMenuItems: [NSMenuItem] = []
+  private var settingsWindow: NSWindow?
 
   init(transcriptionManager: TranscriptionManager) {
     self.transcriptionManager = transcriptionManager
@@ -34,30 +34,10 @@ class MenuBarController: NSObject {
     statusMenuItem.tag = 100  // Tag to identify status item
     menu.addItem(statusMenuItem)
 
-    menu.addItem(NSMenuItem.separator())
-
-    // Hotkey submenu
-    let hotkeyMenu = NSMenu()
-    let hotkeyMenuItem = NSMenuItem(title: "Hotkey", action: nil, keyEquivalent: "")
-    hotkeyMenuItem.submenu = hotkeyMenu
-
-    // Add hotkey options
-    for trigger in HotKeyTrigger.allCases {
-      let item = NSMenuItem(
-        title: trigger.displayName,
-        action: #selector(changeHotkey(_:)),
-        keyEquivalent: ""
-      )
-      item.target = self
-      item.representedObject = trigger
-      hotkeyMenu.addItem(item)
-      hotkeyMenuItems.append(item)
-    }
-
-    DispatchQueue.main.async { [weak self] in
-      self?.updateHotkeyMenuCheckmarks()
-    }
-    menu.addItem(hotkeyMenuItem)
+    // Hotkey info
+    let hotkeyItem = NSMenuItem(title: "Hotkey: Hold fn", action: nil, keyEquivalent: "")
+    hotkeyItem.isEnabled = false
+    menu.addItem(hotkeyItem)
 
     menu.addItem(NSMenuItem.separator())
 
@@ -73,26 +53,6 @@ class MenuBarController: NSObject {
     menu.addItem(quitItem)
 
     statusItem.menu = menu
-  }
-
-  @MainActor @objc private func changeHotkey(_ sender: NSMenuItem) {
-    guard let trigger = sender.representedObject as? HotKeyTrigger else { return }
-
-    // Update the hotkey manager
-    transcriptionManager.setHotkey(trigger)
-
-    // Update checkmarks
-    updateHotkeyMenuCheckmarks()
-  }
-
-  @MainActor private func updateHotkeyMenuCheckmarks() {
-    let currentTrigger = transcriptionManager.currentHotkey
-
-    for item in hotkeyMenuItems {
-      if let trigger = item.representedObject as? HotKeyTrigger {
-        item.state = (trigger == currentTrigger) ? .on : .off
-      }
-    }
   }
 
   @objc private func stateDidChange(_ notification: Notification) {
@@ -187,7 +147,21 @@ class MenuBarController: NSObject {
   }
 
   @objc private func openSettings() {
-    NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+    if settingsWindow == nil {
+      let window = NSWindow(
+        contentRect: NSRect(x: 0, y: 0, width: 400, height: 400),
+        styleMask: [.titled, .closable],
+        backing: .buffered,
+        defer: false
+      )
+      window.title = "AudioType Settings"
+      window.center()
+      window.isReleasedWhenClosed = false
+      window.contentView = NSHostingView(rootView: SettingsView())
+      settingsWindow = window
+    }
+
+    settingsWindow?.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
   }
 

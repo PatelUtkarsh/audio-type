@@ -12,7 +12,7 @@ struct SettingsView: View {
     Form {
       Section {
         LabeledContent("Hotkey") {
-          Text(TranscriptionManager.shared.currentHotkey.displayName)
+          Text("Hold fn")
             .foregroundColor(.secondary)
         }
 
