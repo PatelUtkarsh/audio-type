@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-class MenuBarController: NSObject {
+class MenuBarController: NSObject, NSWindowDelegate {
   private weak var statusItem: NSStatusItem?
   private var transcriptionManager: TranscriptionManager
   private var recordingWindow: NSWindow?
@@ -151,23 +151,35 @@ class MenuBarController: NSObject {
     if settingsWindow == nil {
       let window = NSWindow(
         contentRect: NSRect(x: 0, y: 0, width: 400, height: 400),
-        styleMask: [.titled, .closable],
+        styleMask: [.titled, .closable, .miniaturizable],
         backing: .buffered,
         defer: false
       )
       window.title = "AudioType Settings"
       window.center()
       window.isReleasedWhenClosed = false
+      window.delegate = self
       window.contentView = NSHostingView(rootView: SettingsView())
       settingsWindow = window
     }
 
-    settingsWindow?.makeKeyAndOrderFront(nil)
+    // For LSUIElement apps, we need to temporarily become a regular app to show windows
+    NSApp.setActivationPolicy(.regular)
     NSApp.activate(ignoringOtherApps: true)
+    settingsWindow?.makeKeyAndOrderFront(nil)
   }
 
   @objc private func quit() {
     NSApp.terminate(nil)
+  }
+
+  // MARK: - NSWindowDelegate
+
+  func windowWillClose(_ notification: Notification) {
+    // Return to accessory mode when settings window closes (hide from dock)
+    if (notification.object as? NSWindow) == settingsWindow {
+      NSApp.setActivationPolicy(.accessory)
+    }
   }
 }
 
