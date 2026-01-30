@@ -37,36 +37,7 @@ app: build
 	@mkdir -p AudioType.app/Contents/MacOS AudioType.app/Contents/Resources
 	@cp .build/debug/AudioType AudioType.app/Contents/MacOS/
 	@cp whisper.cpp/build/bin/whisper-cli AudioType.app/Contents/MacOS/
-	@cat > AudioType.app/Contents/Info.plist << 'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleExecutable</key>
-    <string>AudioType</string>
-    <key>CFBundleIdentifier</key>
-    <string>com.audiotype.app</string>
-    <key>CFBundleName</key>
-    <string>AudioType</string>
-    <key>CFBundleDisplayName</key>
-    <string>AudioType</string>
-    <key>CFBundleVersion</key>
-    <string>1.0.0</string>
-    <key>CFBundleShortVersionString</key>
-    <string>1.0.0</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>13.0</string>
-    <key>LSUIElement</key>
-    <true/>
-    <key>NSMicrophoneUsageDescription</key>
-    <string>AudioType needs microphone access to transcribe your speech.</string>
-    <key>NSHighResolutionCapable</key>
-    <true/>
-</dict>
-</plist>
-EOF
+	@cp Resources/Info.plist AudioType.app/Contents/Info.plist
 	@echo "App bundle created: AudioType.app"
 
 # Download whisper model
