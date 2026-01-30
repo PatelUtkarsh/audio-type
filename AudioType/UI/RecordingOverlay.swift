@@ -33,11 +33,3 @@ struct RecordingOverlay: View {
         )
     }
 }
-
-#Preview {
-    VStack(spacing: 20) {
-        RecordingOverlay(text: "Recording...")
-        RecordingOverlay(text: "Processing...")
-    }
-    .padding(50)
-}

@@ -25,7 +25,7 @@ struct SettingsView: View {
             
             Section {
                 Toggle("Launch at Login", isOn: $launchAtLogin)
-                    .onChange(of: launchAtLogin) { _, newValue in
+                    .onChange(of: launchAtLogin) { newValue in
                         setLaunchAtLogin(newValue)
                     }
             } header: {
@@ -100,7 +100,3 @@ struct PermissionStatusView: View {
 }
 
 import AVFoundation
-
-#Preview {
-    SettingsView()
-}

@@ -148,9 +148,3 @@ struct PermissionRow: View {
         .padding(.vertical, 8)
     }
 }
-
-#Preview {
-    OnboardingView {
-        print("Onboarding complete")
-    }
-}
