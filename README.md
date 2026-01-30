@@ -31,7 +31,13 @@ A native macOS menu bar app for voice-to-text. Hold **fn** to record, release to
 
 1. Download the latest `.dmg` from [Releases](https://github.com/PatelUtkarsh/audio-type/releases)
 2. Open the DMG and drag AudioType to Applications
-3. Launch AudioType from Applications
+3. **First launch** - Right-click the app and select "Open" (required for unsigned apps)
+4. Click "Open" in the dialog to confirm
+
+> **Note:** Since this app is not notarized, macOS will block it on first launch. You can also bypass this via Terminal:
+> ```bash
+> xattr -cr /Applications/AudioType.app
+> ```
 
 ### Build from Source
 
