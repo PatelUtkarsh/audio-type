@@ -12,8 +12,28 @@ on:
         default: '1.0.0'
 
 jobs:
+  lint:
+    name: Lint
+    runs-on: macos-14
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install SwiftLint
+        run: brew install swiftlint
+
+      - name: Run SwiftLint
+        run: swiftlint lint --strict AudioType WhisperWrapper
+
   build:
     runs-on: macos-14
+    needs: lint
     
     steps:
       - name: Checkout repository
