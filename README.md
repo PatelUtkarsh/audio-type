@@ -163,3 +163,4 @@ MIT
 
 - [Groq](https://groq.com/) for fast cloud inference
 - [OpenAI Whisper](https://github.com/openai/whisper) for the speech-to-text model
+- This project is entirely vibe coded with AI assistance
