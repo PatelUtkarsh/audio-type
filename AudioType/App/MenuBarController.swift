@@ -1,6 +1,22 @@
 import AppKit
 import SwiftUI
 
+// MARK: – NSImage tinting helper
+
+extension NSImage {
+  /// Returns a copy of the image tinted with the given color (non-template).
+  func tinted(with color: NSColor) -> NSImage {
+    let tinted = self.copy() as! NSImage
+    tinted.isTemplate = false
+    tinted.lockFocus()
+    color.set()
+    let rect = NSRect(origin: .zero, size: tinted.size)
+    rect.fill(using: .sourceAtop)
+    tinted.unlockFocus()
+    return tinted
+  }
+}
+
 /// Shared observable for live audio level — drives the recording waveform.
 class AudioLevelMonitor: ObservableObject {
   static let shared = AudioLevelMonitor()
@@ -90,33 +106,43 @@ class MenuBarController: NSObject, NSWindowDelegate {
 
     switch state {
     case .idle:
-      button.image = NSImage(
+      let img = NSImage(
         systemSymbolName: "waveform.circle.fill", accessibilityDescription: "Ready")
+      img?.isTemplate = true
+      button.image = img
       AudioLevelMonitor.shared.level = 0
       hideRecordingIndicator()
       updateStatusMenuItem("Ready")
 
     case .recording:
-      button.image = NSImage(
+      // Tinted coral/red — non-template so the color shows through
+      if let base = NSImage(
         systemSymbolName: "waveform.circle.fill", accessibilityDescription: "Recording")
+      {
+        button.image = base.tinted(with: AudioTypeTheme.nsRecordingRed)
+      }
       showRecordingIndicator()
       updateStatusMenuItem("Recording...")
 
     case .processing:
-      button.image = NSImage(
+      // Tinted amber — "I'm thinking"
+      if let base = NSImage(
         systemSymbolName: "ellipsis.circle.fill", accessibilityDescription: "Processing")
+      {
+        button.image = base.tinted(with: AudioTypeTheme.nsAmber)
+      }
       AudioLevelMonitor.shared.level = 0
       updateRecordingIndicator(text: "Processing...")
       updateStatusMenuItem("Processing...")
 
     case .error(let message):
-      button.image = NSImage(
+      let img = NSImage(
         systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: "Error")
+      img?.isTemplate = false
+      button.image = img?.tinted(with: .systemRed)
       hideRecordingIndicator()
       updateStatusMenuItem("Error: \(message)")
     }
-
-    button.image?.isTemplate = true
   }
 
   private func updateStatusMenuItem(_ text: String) {

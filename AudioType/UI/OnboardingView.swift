@@ -19,7 +19,7 @@ struct OnboardingView: View {
       VStack(spacing: 8) {
         Image(systemName: "mic.fill")
           .font(.system(size: 48))
-          .foregroundColor(.accentColor)
+          .foregroundColor(AudioTypeTheme.coral)
 
         Text("Welcome to AudioType")
           .font(.title)
@@ -56,7 +56,7 @@ struct OnboardingView: View {
           HStack(spacing: 12) {
             Image(systemName: "key.fill")
               .font(.title2)
-              .foregroundColor(.accentColor)
+              .foregroundColor(AudioTypeTheme.coral)
               .frame(width: 32)
 
             VStack(alignment: .leading, spacing: 2) {
@@ -71,7 +71,7 @@ struct OnboardingView: View {
 
             if apiKeyConfigured {
               Image(systemName: "checkmark.circle.fill")
-                .foregroundColor(.green)
+                .foregroundColor(AudioTypeTheme.coral)
             }
           }
 
@@ -117,6 +117,7 @@ struct OnboardingView: View {
           .frame(maxWidth: .infinity)
       }
       .buttonStyle(.borderedProminent)
+      .tint(AudioTypeTheme.coral)
       .controlSize(.large)
       .disabled(!canContinue)
       .padding(.horizontal)
@@ -187,7 +188,7 @@ struct PermissionRow: View {
     HStack(spacing: 12) {
       Image(systemName: icon)
         .font(.title2)
-        .foregroundColor(.accentColor)
+        .foregroundColor(AudioTypeTheme.coral)
         .frame(width: 32)
 
       VStack(alignment: .leading, spacing: 2) {
@@ -202,7 +203,7 @@ struct PermissionRow: View {
 
       if isGranted {
         Image(systemName: "checkmark.circle.fill")
-          .foregroundColor(.green)
+          .foregroundColor(AudioTypeTheme.coral)
       } else {
         Button("Grant") {
           action()

@@ -31,7 +31,7 @@ struct SettingsView: View {
         if isApiKeySet {
           HStack(spacing: 4) {
             Image(systemName: "checkmark.circle.fill")
-              .foregroundColor(.green)
+              .foregroundColor(AudioTypeTheme.coral)
               .font(.caption)
             Text("API key configured")
               .foregroundColor(.secondary)
@@ -156,7 +156,7 @@ struct PermissionStatusView: View {
   var body: some View {
     HStack(spacing: 4) {
       Image(systemName: granted ? "checkmark.circle.fill" : "xmark.circle.fill")
-        .foregroundColor(granted ? .green : .red)
+        .foregroundColor(granted ? AudioTypeTheme.coral : .red)
       Text(granted ? "Granted" : "Not Granted")
         .foregroundColor(.secondary)
     }

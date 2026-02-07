@@ -41,7 +41,13 @@ struct LiveWaveformView: View {
     HStack(spacing: 3) {
       ForEach(0..<barCount, id: \.self) { index in
         RoundedRectangle(cornerRadius: 1.5)
-          .fill(Color.white)
+          .fill(
+            LinearGradient(
+              colors: [AudioTypeTheme.coral, AudioTypeTheme.coralLight],
+              startPoint: .bottom,
+              endPoint: .top
+            )
+          )
           .frame(width: 3, height: barHeight(for: index))
           .animation(.easeOut(duration: 0.08), value: level)
       }
@@ -63,7 +69,7 @@ struct ThinkingDotsView: View {
     HStack(spacing: 6) {
       ForEach(0..<3, id: \.self) { index in
         Circle()
-          .fill(Color.white)
+          .fill(AudioTypeTheme.thinkingColor)
           .frame(width: 6, height: 6)
           .scaleEffect(animating ? 1.0 : 0.4)
           .opacity(animating ? 1.0 : 0.3)
