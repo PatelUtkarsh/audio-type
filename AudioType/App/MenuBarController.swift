@@ -1,6 +1,12 @@
 import AppKit
 import SwiftUI
 
+/// Shared observable for live audio level — drives the recording waveform.
+class AudioLevelMonitor: ObservableObject {
+  static let shared = AudioLevelMonitor()
+  @Published var level: Float = 0.0
+}
+
 class MenuBarController: NSObject, NSWindowDelegate {
   private weak var statusItem: NSStatusItem?
   private var transcriptionManager: TranscriptionManager
@@ -16,6 +22,14 @@ class MenuBarController: NSObject, NSWindowDelegate {
       self,
       selector: #selector(stateDidChange),
       name: .transcriptionStateChanged,
+      object: nil
+    )
+
+    // Observe audio level changes
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(audioLevelDidChange),
+      name: .audioLevelChanged,
       object: nil
     )
   }
@@ -64,6 +78,13 @@ class MenuBarController: NSObject, NSWindowDelegate {
     }
   }
 
+  @objc private func audioLevelDidChange(_ notification: Notification) {
+    guard let level = notification.userInfo?["level"] as? Float else { return }
+    DispatchQueue.main.async {
+      AudioLevelMonitor.shared.level = level
+    }
+  }
+
   private func updateUI(for state: TranscriptionState) {
     guard let button = statusItem?.button else { return }
 
@@ -71,6 +92,7 @@ class MenuBarController: NSObject, NSWindowDelegate {
     case .idle:
       button.image = NSImage(
         systemSymbolName: "waveform.circle.fill", accessibilityDescription: "Ready")
+      AudioLevelMonitor.shared.level = 0
       hideRecordingIndicator()
       updateStatusMenuItem("Ready")
 
@@ -83,6 +105,7 @@ class MenuBarController: NSObject, NSWindowDelegate {
     case .processing:
       button.image = NSImage(
         systemSymbolName: "ellipsis.circle.fill", accessibilityDescription: "Processing")
+      AudioLevelMonitor.shared.level = 0
       updateRecordingIndicator(text: "Processing...")
       updateStatusMenuItem("Processing...")
 
@@ -128,8 +151,9 @@ class MenuBarController: NSObject, NSWindowDelegate {
       recordingWindow = window
     }
 
-    // Always update content to "Recording..." when showing
-    let hostingView = NSHostingView(rootView: RecordingOverlay(text: "Recording..."))
+    let hostingView = NSHostingView(
+      rootView: RecordingOverlay(text: "Recording...")
+        .environmentObject(AudioLevelMonitor.shared))
     hostingView.frame = NSRect(x: 0, y: 0, width: 180, height: 50)
     recordingWindow?.contentView = hostingView
     recordingWindow?.orderFront(nil)
@@ -137,7 +161,9 @@ class MenuBarController: NSObject, NSWindowDelegate {
 
   private func updateRecordingIndicator(text: String) {
     if let window = recordingWindow {
-      let hostingView = NSHostingView(rootView: RecordingOverlay(text: text))
+      let hostingView = NSHostingView(
+        rootView: RecordingOverlay(text: text)
+          .environmentObject(AudioLevelMonitor.shared))
       hostingView.frame = NSRect(x: 0, y: 0, width: 180, height: 50)
       window.contentView = hostingView
     }
@@ -185,4 +211,5 @@ class MenuBarController: NSObject, NSWindowDelegate {
 
 extension Notification.Name {
   static let transcriptionStateChanged = Notification.Name("transcriptionStateChanged")
+  static let audioLevelChanged = Notification.Name("audioLevelChanged")
 }
