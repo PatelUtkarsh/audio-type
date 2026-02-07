@@ -5,6 +5,7 @@ import SwiftUI
 struct SettingsView: View {
   @AppStorage("launchAtLogin") private var launchAtLogin = false
   @State private var selectedModel = GroqModel.current
+  @State private var selectedLanguage = TranscriptionLanguage.current
   @State private var apiKey: String = ""
   @State private var isApiKeySet: Bool = GroqEngine.isConfigured
   @State private var apiKeySaveError: String?
@@ -63,6 +64,17 @@ struct SettingsView: View {
         .pickerStyle(.menu)
         .onChange(of: selectedModel) { newModel in
           GroqModel.current = newModel
+        }
+
+        Picker("Language", selection: $selectedLanguage) {
+          ForEach(TranscriptionLanguage.allCases) { lang in
+            Text(lang.displayName)
+              .tag(lang)
+          }
+        }
+        .pickerStyle(.menu)
+        .onChange(of: selectedLanguage) { newLang in
+          TranscriptionLanguage.current = newLang
         }
       } header: {
         Text("Transcription (Groq)")

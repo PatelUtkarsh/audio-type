@@ -28,6 +28,90 @@ enum GroqModel: String, CaseIterable {
   }
 }
 
+// MARK: - Transcription Language
+
+enum TranscriptionLanguage: String, CaseIterable, Identifiable {
+  case auto = "auto"
+  case english = "en"
+  case spanish = "es"
+  case french = "fr"
+  case german = "de"
+  case italian = "it"
+  case portuguese = "pt"
+  case dutch = "nl"
+  case russian = "ru"
+  case chinese = "zh"
+  case japanese = "ja"
+  case korean = "ko"
+  case arabic = "ar"
+  case hindi = "hi"
+  case turkish = "tr"
+  case polish = "pl"
+  case swedish = "sv"
+  case danish = "da"
+  case norwegian = "no"
+  case finnish = "fi"
+  case czech = "cs"
+  case ukrainian = "uk"
+  case indonesian = "id"
+  case malay = "ms"
+  case thai = "th"
+  case vietnamese = "vi"
+  case gujarati = "gu"
+
+  var id: String { rawValue }
+
+  var displayName: String {
+    switch self {
+    case .auto: return "Auto-detect"
+    case .english: return "English"
+    case .spanish: return "Spanish"
+    case .french: return "French"
+    case .german: return "German"
+    case .italian: return "Italian"
+    case .portuguese: return "Portuguese"
+    case .dutch: return "Dutch"
+    case .russian: return "Russian"
+    case .chinese: return "Chinese"
+    case .japanese: return "Japanese"
+    case .korean: return "Korean"
+    case .arabic: return "Arabic"
+    case .hindi: return "Hindi"
+    case .turkish: return "Turkish"
+    case .polish: return "Polish"
+    case .swedish: return "Swedish"
+    case .danish: return "Danish"
+    case .norwegian: return "Norwegian"
+    case .finnish: return "Finnish"
+    case .czech: return "Czech"
+    case .ukrainian: return "Ukrainian"
+    case .indonesian: return "Indonesian"
+    case .malay: return "Malay"
+    case .thai: return "Thai"
+    case .vietnamese: return "Vietnamese"
+    case .gujarati: return "Gujarati"
+    }
+  }
+
+  /// ISO-639-1 code sent to the API, or `nil` for auto-detect.
+  var isoCode: String? {
+    self == .auto ? nil : rawValue
+  }
+
+  static var current: TranscriptionLanguage {
+    get {
+      if let saved = UserDefaults.standard.string(forKey: "transcriptionLanguage"),
+        let lang = TranscriptionLanguage(rawValue: saved) {
+        return lang
+      }
+      return .auto
+    }
+    set {
+      UserDefaults.standard.set(newValue.rawValue, forKey: "transcriptionLanguage")
+    }
+  }
+}
+
 // MARK: - Errors
 
 enum GroqEngineError: Error, LocalizedError {
@@ -118,8 +202,10 @@ class GroqEngine {
       contentType: "audio/wav", data: wavData)
     // model field
     body.appendMultipart(boundary: boundary, name: "model", value: model.rawValue)
-    // language field
-    body.appendMultipart(boundary: boundary, name: "language", value: "en")
+    // language field (omit for auto-detect — Whisper infers the language)
+    if let langCode = TranscriptionLanguage.current.isoCode {
+      body.appendMultipart(boundary: boundary, name: "language", value: langCode)
+    }
     // response_format field
     body.appendMultipart(boundary: boundary, name: "response_format", value: "json")
     // temperature
