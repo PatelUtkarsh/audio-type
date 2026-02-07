@@ -4,9 +4,10 @@ import SwiftUI
 
 struct SettingsView: View {
   @AppStorage("launchAtLogin") private var launchAtLogin = false
-  @State private var selectedModel = WhisperModel.current
-  @State private var isDownloading = false
-  @State private var downloadError: String?
+  @State private var selectedModel = GroqModel.current
+  @State private var apiKey: String = ""
+  @State private var isApiKeySet: Bool = GroqEngine.isConfigured
+  @State private var apiKeySaveError: String?
 
   var body: some View {
     Form {
@@ -16,41 +17,53 @@ struct SettingsView: View {
             .foregroundColor(.secondary)
         }
 
-        Picker("Model", selection: $selectedModel) {
-          ForEach(WhisperModel.allCases, id: \.self) { model in
-            HStack {
-              Text(model.displayName)
-              if WhisperEngine.isModelDownloaded(model) {
-                Image(systemName: "checkmark.circle.fill")
-                  .foregroundColor(.green)
-                  .font(.caption)
-              }
-            }
-            .tag(model)
-          }
-        }
-        .pickerStyle(.menu)
-        .onChange(of: selectedModel) { newModel in
-          handleModelChange(newModel)
-        }
-        .disabled(isDownloading)
+        // Groq API Key
+        HStack {
+          SecureField("Groq API Key", text: $apiKey)
+            .textFieldStyle(.roundedBorder)
 
-        if isDownloading {
-          HStack {
-            ProgressView()
-              .scaleEffect(0.8)
-            Text("Downloading model...")
+          Button(isApiKeySet ? "Update" : "Save") {
+            saveApiKey()
+          }
+          .disabled(apiKey.isEmpty)
+        }
+
+        if isApiKeySet {
+          HStack(spacing: 4) {
+            Image(systemName: "checkmark.circle.fill")
+              .foregroundColor(.green)
+              .font(.caption)
+            Text("API key configured")
               .foregroundColor(.secondary)
+              .font(.caption)
           }
         }
 
-        if let error = downloadError {
+        if let error = apiKeySaveError {
           Text(error)
             .foregroundColor(.red)
             .font(.caption)
         }
+
+        Button("Get free API key") {
+          if let url = URL(string: "https://console.groq.com/keys") {
+            NSWorkspace.shared.open(url)
+          }
+        }
+        .font(.caption)
+
+        Picker("Model", selection: $selectedModel) {
+          ForEach(GroqModel.allCases, id: \.self) { model in
+            Text(model.displayName)
+              .tag(model)
+          }
+        }
+        .pickerStyle(.menu)
+        .onChange(of: selectedModel) { newModel in
+          GroqModel.current = newModel
+        }
       } header: {
-        Text("Transcription")
+        Text("Transcription (Groq)")
       }
 
       Section {
@@ -86,48 +99,31 @@ struct SettingsView: View {
         HStack {
           Text("Version")
           Spacer()
-          Text("1.1.0")
+          Text("2.0.0")
             .foregroundColor(.secondary)
         }
 
-        Link("View on GitHub", destination: URL(string: "https://github.com")!)
+        Link("View on GitHub", destination: URL(string: "https://github.com/PatelUtkarsh/audio-type")!)
       } header: {
         Text("About")
       }
     }
     .formStyle(.grouped)
-    .frame(width: 400, height: 400)
+    .frame(width: 400, height: 420)
   }
 
-  private func handleModelChange(_ newModel: WhisperModel) {
-    downloadError = nil
-
-    // Check if model is already downloaded
-    if WhisperEngine.isModelDownloaded(newModel) {
-      WhisperModel.current = newModel
-      // Notify to reload engine
-      NotificationCenter.default.post(name: .modelChanged, object: newModel)
-      return
-    }
-
-    // Need to download
-    isDownloading = true
-    Task {
-      do {
-        try await WhisperEngine.downloadModelFile(newModel)
-        await MainActor.run {
-          isDownloading = false
-          WhisperModel.current = newModel
-          NotificationCenter.default.post(name: .modelChanged, object: newModel)
-        }
-      } catch {
-        await MainActor.run {
-          isDownloading = false
-          downloadError = "Failed to download: \(error.localizedDescription)"
-          // Revert selection
-          selectedModel = WhisperModel.current
-        }
+  private func saveApiKey() {
+    apiKeySaveError = nil
+    do {
+      try GroqEngine.setApiKey(apiKey)
+      isApiKeySet = true
+      apiKey = ""  // Clear the field after saving
+      // Notify TranscriptionManager
+      Task { @MainActor in
+        TranscriptionManager.shared.onApiKeyChanged()
       }
+    } catch {
+      apiKeySaveError = "Failed to save: \(error.localizedDescription)"
     }
   }
 

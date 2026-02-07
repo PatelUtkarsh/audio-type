@@ -30,15 +30,6 @@ build/
 *.dylib
 *.o
 
-# Models (downloaded separately)
-Models/*.bin
-Models/*.mlmodelc/
-*.ggml
-ggml-*.bin
-
-# whisper.cpp build artifacts
-whisper.cpp/build/
-
 # macOS
 .DS_Store
 .AppleDouble
