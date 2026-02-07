@@ -6,7 +6,7 @@ import SwiftUI
 extension NSImage {
   /// Returns a copy of the image tinted with the given color (non-template).
   func tinted(with color: NSColor) -> NSImage {
-    let tinted = self.copy() as! NSImage
+    guard let tinted = self.copy() as? NSImage else { return self }
     tinted.isTemplate = false
     tinted.lockFocus()
     color.set()
@@ -117,8 +117,7 @@ class MenuBarController: NSObject, NSWindowDelegate {
     case .recording:
       // Tinted coral/red — non-template so the color shows through
       if let base = NSImage(
-        systemSymbolName: "waveform.circle.fill", accessibilityDescription: "Recording")
-      {
+        systemSymbolName: "waveform.circle.fill", accessibilityDescription: "Recording") {
         button.image = base.tinted(with: AudioTypeTheme.nsRecordingRed)
       }
       showRecordingIndicator()
@@ -127,8 +126,7 @@ class MenuBarController: NSObject, NSWindowDelegate {
     case .processing:
       // Tinted amber — "I'm thinking"
       if let base = NSImage(
-        systemSymbolName: "ellipsis.circle.fill", accessibilityDescription: "Processing")
-      {
+        systemSymbolName: "ellipsis.circle.fill", accessibilityDescription: "Processing") {
         button.image = base.tinted(with: AudioTypeTheme.nsAmber)
       }
       AudioLevelMonitor.shared.level = 0
