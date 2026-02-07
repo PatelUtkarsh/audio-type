@@ -26,37 +26,14 @@ class TranscriptionManager: ObservableObject {
   @Published private(set) var state: TranscriptionState = .idle
   @Published private(set) var isInitialized = false
 
-  private var whisperEngine: WhisperEngine?
+  private var groqEngine: GroqEngine?
   private var audioRecorder: AudioRecorder?
   private var hotKeyManager: HotKeyManager?
   private var textInserter: TextInserter?
 
   private let logger = Logger(subsystem: "com.audiotype", category: "TranscriptionManager")
 
-  private init() {
-    // Listen for model changes
-    NotificationCenter.default.addObserver(
-      self,
-      selector: #selector(handleModelChanged),
-      name: .modelChanged,
-      object: nil
-    )
-  }
-
-  @objc private func handleModelChanged(_ notification: Notification) {
-    guard let model = notification.object as? WhisperModel else { return }
-    logger.info("Model changed to: \(model.displayName)")
-
-    // Reload whisper engine with new model
-    Task {
-      do {
-        whisperEngine = try await WhisperEngine.load(model: model)
-        logger.info("Whisper engine reloaded with \(model.displayName)")
-      } catch {
-        logger.error("Failed to reload whisper engine: \(error.localizedDescription)")
-      }
-    }
-  }
+  private init() {}
 
   func initialize() async {
     logger.info("Initializing TranscriptionManager...")
@@ -65,14 +42,14 @@ class TranscriptionManager: ObservableObject {
     audioRecorder = AudioRecorder()
     textInserter = TextInserter()
 
-    // Load whisper model
-    do {
-      whisperEngine = try await WhisperEngine.load()
-      logger.info("Whisper model loaded successfully")
-    } catch {
-      logger.error("Failed to load whisper model: \(error.localizedDescription)")
-      setState(.error("Failed to load model: \(error.localizedDescription)"))
-      return
+    // Initialize Groq engine (lightweight — no model download needed)
+    groqEngine = GroqEngine()
+
+    if !GroqEngine.isConfigured {
+      logger.warning("Groq API key not configured")
+      setState(.error("API key required — open Settings"))
+    } else {
+      logger.info("Groq engine ready")
     }
 
     // Start hotkey listener
@@ -84,14 +61,26 @@ class TranscriptionManager: ObservableObject {
     hotKeyManager?.startListening()
 
     isInitialized = true
-    setState(.idle)
+    if GroqEngine.isConfigured {
+      setState(.idle)
+    }
     logger.info("TranscriptionManager initialized successfully")
   }
 
   func cleanup() {
     hotKeyManager?.stopListening()
-    whisperEngine = nil
+    groqEngine = nil
     audioRecorder = nil
+  }
+
+  /// Called when the user saves an API key — re-validate and clear error state.
+  func onApiKeyChanged() {
+    if GroqEngine.isConfigured {
+      setState(.idle)
+      logger.info("API key configured, engine ready")
+    } else {
+      setState(.error("API key required — open Settings"))
+    }
   }
 
   private func handleHotKeyEvent(_ event: HotKeyEvent) {
@@ -106,6 +95,11 @@ class TranscriptionManager: ObservableObject {
   private func startRecording() {
     guard state == .idle else {
       logger.warning("Cannot start recording: not in idle state")
+      return
+    }
+
+    guard GroqEngine.isConfigured else {
+      setState(.error("API key required — open Settings"))
       return
     }
 
@@ -141,9 +135,9 @@ class TranscriptionManager: ObservableObject {
   }
 
   private func transcribeAndInsert(samples: [Float]) async {
-    guard let whisperEngine = whisperEngine else {
+    guard let groqEngine = groqEngine else {
       await MainActor.run {
-        self.setState(.error("Whisper engine not initialized"))
+        self.setState(.error("Groq engine not initialized"))
       }
       return
     }
@@ -151,7 +145,7 @@ class TranscriptionManager: ObservableObject {
     let startTime = CFAbsoluteTimeGetCurrent()
 
     do {
-      let text = try whisperEngine.transcribe(samples: samples)
+      let text = try await groqEngine.transcribe(samples: samples)
       let elapsed = CFAbsoluteTimeGetCurrent() - startTime
       logger.info("Transcription completed in \(elapsed, format: .fixed(precision: 2))s: \(text)")
 

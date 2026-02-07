@@ -1,0 +1,239 @@
+import Foundation
+import os.log
+
+// MARK: - Groq Model
+
+enum GroqModel: String, CaseIterable {
+  case whisperLargeV3Turbo = "whisper-large-v3-turbo"
+  case whisperLargeV3 = "whisper-large-v3"
+
+  var displayName: String {
+    switch self {
+    case .whisperLargeV3Turbo: return "Whisper Large V3 Turbo (faster)"
+    case .whisperLargeV3: return "Whisper Large V3 (most accurate)"
+    }
+  }
+
+  static var current: GroqModel {
+    get {
+      if let saved = UserDefaults.standard.string(forKey: "groqModel"),
+        let model = GroqModel(rawValue: saved)
+      {
+        return model
+      }
+      return .whisperLargeV3Turbo
+    }
+    set {
+      UserDefaults.standard.set(newValue.rawValue, forKey: "groqModel")
+    }
+  }
+}
+
+// MARK: - Errors
+
+enum GroqEngineError: Error, LocalizedError {
+  case apiKeyNotConfigured
+  case wavEncodingFailed
+  case networkError(String)
+  case httpError(Int, String)
+  case invalidResponse
+  case rateLimited
+  case unauthorized
+
+  var errorDescription: String? {
+    switch self {
+    case .apiKeyNotConfigured:
+      return "Groq API key not configured. Open Settings to add your key."
+    case .wavEncodingFailed:
+      return "Failed to encode audio to WAV format."
+    case .networkError(let message):
+      return "Network error: \(message)"
+    case .httpError(let code, let message):
+      return "Groq API error (HTTP \(code)): \(message)"
+    case .invalidResponse:
+      return "Invalid response from Groq API."
+    case .rateLimited:
+      return "Rate limited. Please wait a moment and try again."
+    case .unauthorized:
+      return "Invalid Groq API key. Check your key in Settings."
+    }
+  }
+}
+
+// MARK: - Groq Engine
+
+class GroqEngine {
+  private static let apiURL = URL(
+    string: "https://api.groq.com/openai/v1/audio/transcriptions")!
+  private static let keychainKey = "groqApiKey"
+
+  private let logger = Logger(subsystem: "com.audiotype", category: "GroqEngine")
+
+  init() {}
+
+  // MARK: - API Key Management
+
+  static var apiKey: String? {
+    KeychainHelper.get(key: keychainKey)
+  }
+
+  static var isConfigured: Bool {
+    guard let key = apiKey else { return false }
+    return !key.isEmpty
+  }
+
+  static func setApiKey(_ key: String) throws {
+    try KeychainHelper.save(key: keychainKey, value: key)
+  }
+
+  static func clearApiKey() {
+    KeychainHelper.delete(key: keychainKey)
+  }
+
+  // MARK: - Transcription
+
+  func transcribe(samples: [Float]) async throws -> String {
+    guard let apiKey = Self.apiKey, !apiKey.isEmpty else {
+      throw GroqEngineError.apiKeyNotConfigured
+    }
+
+    // Convert PCM samples to WAV data
+    let wavData = try encodeWAV(samples: samples, sampleRate: 16000)
+    logger.info("Encoded WAV: \(wavData.count) bytes from \(samples.count) samples")
+
+    // Build multipart request
+    let boundary = UUID().uuidString
+    var request = URLRequest(url: Self.apiURL)
+    request.httpMethod = "POST"
+    request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+    request.setValue(
+      "multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+    request.timeoutInterval = 30
+
+    let model = GroqModel.current
+    var body = Data()
+
+    // file field
+    body.appendMultipart(boundary: boundary, name: "file", filename: "audio.wav",
+      contentType: "audio/wav", data: wavData)
+    // model field
+    body.appendMultipart(boundary: boundary, name: "model", value: model.rawValue)
+    // language field
+    body.appendMultipart(boundary: boundary, name: "language", value: "en")
+    // response_format field
+    body.appendMultipart(boundary: boundary, name: "response_format", value: "json")
+    // temperature
+    body.appendMultipart(boundary: boundary, name: "temperature", value: "0")
+    // close boundary
+    body.append("--\(boundary)--\r\n".data(using: .utf8)!)
+
+    request.httpBody = body
+
+    // Send request
+    let (data, response): (Data, URLResponse)
+    do {
+      (data, response) = try await URLSession.shared.data(for: request)
+    } catch {
+      throw GroqEngineError.networkError(error.localizedDescription)
+    }
+
+    // Parse response
+    guard let httpResponse = response as? HTTPURLResponse else {
+      throw GroqEngineError.invalidResponse
+    }
+
+    logger.info("Groq API response: HTTP \(httpResponse.statusCode)")
+
+    switch httpResponse.statusCode {
+    case 200:
+      break
+    case 401:
+      throw GroqEngineError.unauthorized
+    case 429:
+      throw GroqEngineError.rateLimited
+    default:
+      let body = String(data: data, encoding: .utf8) ?? "Unknown error"
+      throw GroqEngineError.httpError(httpResponse.statusCode, body)
+    }
+
+    // Decode JSON
+    struct TranscriptionResponse: Decodable {
+      let text: String
+    }
+
+    do {
+      let result = try JSONDecoder().decode(TranscriptionResponse.self, from: data)
+      return result.text
+    } catch {
+      let raw = String(data: data, encoding: .utf8) ?? "<binary>"
+      logger.error("Failed to decode Groq response: \(raw)")
+      throw GroqEngineError.invalidResponse
+    }
+  }
+
+  // MARK: - WAV Encoding
+
+  /// Encode Float32 PCM samples into a WAV file in memory (16-bit PCM, mono).
+  private func encodeWAV(samples: [Float], sampleRate: Int) throws -> Data {
+    var data = Data()
+
+    let int16Samples = samples.map { sample -> Int16 in
+      let clamped = max(-1.0, min(1.0, sample))
+      return Int16(clamped * Float(Int16.max))
+    }
+
+    let numChannels: UInt16 = 1
+    let bitsPerSample: UInt16 = 16
+    let byteRate = UInt32(sampleRate) * UInt32(numChannels) * UInt32(bitsPerSample / 8)
+    let blockAlign = numChannels * (bitsPerSample / 8)
+    let dataSize = UInt32(int16Samples.count * 2)
+    let fileSize = 36 + dataSize
+
+    // RIFF header
+    data.append(contentsOf: "RIFF".utf8)
+    data.append(contentsOf: withUnsafeBytes(of: fileSize.littleEndian) { Array($0) })
+    data.append(contentsOf: "WAVE".utf8)
+
+    // fmt chunk
+    data.append(contentsOf: "fmt ".utf8)
+    data.append(contentsOf: withUnsafeBytes(of: UInt32(16).littleEndian) { Array($0) })
+    data.append(contentsOf: withUnsafeBytes(of: UInt16(1).littleEndian) { Array($0) })  // PCM
+    data.append(contentsOf: withUnsafeBytes(of: numChannels.littleEndian) { Array($0) })
+    data.append(contentsOf: withUnsafeBytes(of: UInt32(sampleRate).littleEndian) { Array($0) })
+    data.append(contentsOf: withUnsafeBytes(of: byteRate.littleEndian) { Array($0) })
+    data.append(contentsOf: withUnsafeBytes(of: blockAlign.littleEndian) { Array($0) })
+    data.append(contentsOf: withUnsafeBytes(of: bitsPerSample.littleEndian) { Array($0) })
+
+    // data chunk
+    data.append(contentsOf: "data".utf8)
+    data.append(contentsOf: withUnsafeBytes(of: dataSize.littleEndian) { Array($0) })
+
+    for sample in int16Samples {
+      data.append(contentsOf: withUnsafeBytes(of: sample.littleEndian) { Array($0) })
+    }
+
+    return data
+  }
+}
+
+// MARK: - Data Helpers
+
+extension Data {
+  mutating func appendMultipart(
+    boundary: String, name: String, filename: String, contentType: String, data: Data
+  ) {
+    append("--\(boundary)\r\n".data(using: .utf8)!)
+    append(
+      "Content-Disposition: form-data; name=\"\(name)\"; filename=\"\(filename)\"\r\n".data(
+        using: .utf8)!)
+    append("Content-Type: \(contentType)\r\n\r\n".data(using: .utf8)!)
+    append(data)
+    append("\r\n".data(using: .utf8)!)
+  }
+
+  mutating func appendMultipart(boundary: String, name: String, value: String) {
+    append("--\(boundary)\r\n".data(using: .utf8)!)
+    append("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".data(using: .utf8)!)
+    append("\(value)\r\n".data(using: .utf8)!)
+  }
+}

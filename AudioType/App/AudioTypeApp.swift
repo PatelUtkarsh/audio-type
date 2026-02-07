@@ -44,21 +44,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let micPermission = await Permissions.checkMicrophone()
     let accessibilityPermission = Permissions.checkAccessibility()
 
-    if !micPermission || !accessibilityPermission {
+    if !micPermission || !accessibilityPermission || !GroqEngine.isConfigured {
       // Show onboarding window
       DispatchQueue.main.async {
         self.showOnboarding()
       }
     } else {
-      // Load model and start listening for hotkey
+      // All set — start listening for hotkey
       await transcriptionManager.initialize()
     }
   }
 
   private func showOnboarding() {
     let window = NSWindow(
-      contentRect: NSRect(x: 0, y: 0, width: 450, height: 350),
-      styleMask: [.titled, .closable],
+      contentRect: NSRect(x: 0, y: 0, width: 450, height: 480),
+      styleMask: [.titled],
       backing: .buffered,
       defer: false
     )

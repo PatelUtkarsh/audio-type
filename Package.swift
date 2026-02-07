@@ -13,25 +13,16 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "AudioType",
-            dependencies: ["WhisperWrapper"],
+            dependencies: [],
             path: "AudioType",
-            exclude: ["Bridging"],
             resources: [
                 .process("Resources")
             ],
             linkerSettings: [
-                .linkedFramework("Accelerate"),
-                .linkedFramework("Metal"),
-                .linkedFramework("MetalKit"),
                 .linkedFramework("AVFoundation"),
                 .linkedFramework("CoreAudio"),
                 .linkedFramework("ApplicationServices")
             ]
-        ),
-        .target(
-            name: "WhisperWrapper",
-            dependencies: [],
-            path: "WhisperWrapper"
         )
     ]
 )

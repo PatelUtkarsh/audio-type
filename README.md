@@ -5,33 +5,52 @@ A native macOS menu bar app for voice-to-text. Hold **fn** to record, release to
 ## Features
 
 - **Hold fn key** to record voice, release to transcribe and insert text
-- **100% local processing** - uses [whisper.cpp](https://github.com/ggerganov/whisper.cpp) with Metal GPU acceleration
-- **Works in any app** - types transcribed text into the focused application
-- **Multiple model sizes** - choose from tiny, base, small, or medium models
-- **Lightweight** - runs in menu bar, no dock icon
+- **Cloud-powered transcription** via [Groq](https://groq.com/) — uses Whisper Large V3 for high accuracy
+- **Works in any app** — types transcribed text into the focused application
+- **Self-serve** — bring your own free Groq API key
+- **Lightweight** — runs in menu bar, no dock icon
 
-## Privacy
+## Privacy & Data
 
-**All processing happens locally on your Mac.** 
+> **Important:** AudioType previously ran transcription 100% locally using whisper.cpp. We found the local model quality insufficient for reliable daily use, so we switched to Groq's cloud-based Whisper API which provides significantly better accuracy and speed.
 
-- No audio is ever sent to the cloud
-- No internet connection required for transcription
-- Audio is processed in memory and never saved to disk
-- Models are downloaded once and stored locally
+**What this means:**
+
+- Audio recordings **are sent to Groq's servers** for transcription
+- An internet connection **is required** for transcription
+- Your Groq API key is stored locally in Application Support with restricted file permissions
+- No audio is saved to disk locally — it is recorded in memory, sent to Groq, and discarded
+- See [Groq's data policy](https://groq.com/privacy-policy/) for how they handle your data
+
+### Looking for the privacy-focused local version?
+
+If you prefer **100% offline transcription** with no data leaving your machine, you can use [AudioType v1.1.1](https://github.com/PatelUtkarsh/audio-type/releases/tag/v1.1.1) — the last release that runs transcription entirely on-device using a local OpenAI Whisper model via [whisper.cpp](https://github.com/ggerganov/whisper.cpp). No internet or API key required. Note that local transcription accuracy is lower than the cloud version.
 
 ## Requirements
 
 - macOS 14.0 (Sonoma) or later
-- Apple Silicon Mac (M1/M2/M3) recommended for best performance
-- ~150MB-1.5GB disk space depending on model size
+- Apple Silicon or Intel Mac
+- Internet connection
+- Free [Groq API key](https://console.groq.com/keys)
 
-## Installation
+## Setup
 
-### Download Release
+### 1. Get a Groq API Key (free)
+
+1. Go to [console.groq.com/keys](https://console.groq.com/keys)
+2. Create an account or sign in
+3. Generate a new API key
+4. Copy the key — you'll paste it into AudioType on first launch
+
+Groq's free tier is generous: ~2 hours of audio per hour, ~8 hours per day. More than enough for dictation.
+
+### 2. Install AudioType
+
+#### Download Release
 
 1. Download the latest `.dmg` from [Releases](https://github.com/PatelUtkarsh/audio-type/releases)
 2. Open the DMG and drag AudioType to Applications
-3. **First launch** - Right-click the app and select "Open" (required for unsigned apps)
+3. **First launch** — Right-click the app and select "Open" (required for unsigned apps)
 4. Click "Open" in the dialog to confirm
 
 > **Note:** Since this app is not notarized, macOS will block it on first launch. You can also bypass this via Terminal:
@@ -39,47 +58,49 @@ A native macOS menu bar app for voice-to-text. Hold **fn** to record, release to
 > xattr -cr /Applications/AudioType.app
 > ```
 
-### Build from Source
+#### Build from Source
 
 ```bash
-# Clone with submodules
-git clone --recursive https://github.com/PatelUtkarsh/audio-type.git
+# Clone the repository
+git clone https://github.com/PatelUtkarsh/audio-type.git
 cd audio-type
 
-# Build whisper.cpp and create app bundle
+# Build and create app bundle
 make app
 
 # Run the app
 open AudioType.app
 ```
 
-## Permissions
+### 3. First Launch
 
-AudioType requires the following permissions:
+On first launch, AudioType will ask you to:
+
+1. **Grant Microphone access** — to record your voice
+2. **Grant Accessibility access** — to type text into other apps
+3. **Enter your Groq API key** — for cloud transcription
+
+## Permissions
 
 | Permission | Purpose |
 |------------|---------|
 | **Microphone** | Record voice for transcription |
 | **Accessibility** | Detect fn key and type text into apps |
-
-On first launch, you'll be prompted to grant these permissions in System Settings.
+| **Internet** | Send audio to Groq for transcription |
 
 ## Usage
 
-1. **Launch AudioType** - appears in menu bar with a waveform icon
-2. **Hold fn key** - starts recording (overlay shows "Recording...")
-3. **Release fn key** - processes audio and types the result
-4. **Click menu bar icon** - access Settings or Quit
+1. **Launch AudioType** — appears in menu bar with a waveform icon
+2. **Hold fn key** — starts recording (overlay shows "Recording...")
+3. **Release fn key** — sends audio to Groq and types the result
+4. **Click menu bar icon** — access Settings or Quit
 
 ### Settings
 
-- **Model Selection** - choose transcription model:
-  - `tiny` (~75MB) - fastest, lower accuracy
-  - `base` (~142MB) - good balance (default)
-  - `small` (~466MB) - better accuracy
-  - `medium` (~1.5GB) - best accuracy, slower
-
-Models are downloaded automatically on first use.
+- **Groq API Key** — add or update your key
+- **Model Selection**:
+  - `Whisper Large V3 Turbo` — faster, slightly lower accuracy (default)
+  - `Whisper Large V3` — highest accuracy, slightly slower
 
 ## How It Works
 
@@ -87,7 +108,11 @@ Models are downloaded automatically on first use.
 fn key held -> Record audio -> Release fn key
                                     |
                                     v
-                            whisper.cpp transcribes
+                            Encode audio as WAV
+                                    |
+                                    v
+                            Send to Groq API
+                            (Whisper Large V3)
                                     |
                                     v
                             Text post-processing
@@ -100,10 +125,11 @@ fn key held -> Record audio -> Release fn key
 
 ## Tech Stack
 
-- **Swift** - native macOS app
-- **whisper.cpp** - local speech recognition with Metal acceleration
-- **AVAudioEngine** - low-latency audio capture
-- **CGEvent** - global hotkey detection and keyboard simulation
+- **Swift** — native macOS app
+- **Groq API** — cloud speech-to-text (Whisper Large V3)
+- **AVAudioEngine** — low-latency audio capture
+- **CGEvent** — global hotkey detection and keyboard simulation
+- **Local secure storage** — API key stored with restricted file permissions
 
 ## Troubleshooting
 
@@ -115,9 +141,26 @@ fn key held -> Record audio -> Release fn key
 - Check Microphone permission in System Settings > Privacy & Security > Microphone
 - Ensure your microphone is working in other apps
 
-### Transcription is slow
-- Try a smaller model (tiny or base) in Settings
-- Ensure you're on Apple Silicon for Metal acceleration
+### Transcription fails
+- Check your internet connection
+- Verify your Groq API key is valid in Settings
+- If you see "Rate limited", wait a moment and try again
+- Check [Groq status](https://status.groq.com/) for service issues
+
+### "API key required" error
+- Open Settings from the menu bar icon and enter your Groq API key
+- Get a free key at [console.groq.com/keys](https://console.groq.com/keys)
+
+## Rate Limits (Free Tier)
+
+| Limit | Value |
+|-------|-------|
+| Requests per minute | 20 |
+| Requests per day | 2,000 |
+| Audio seconds per hour | 7,200 (~2 hours) |
+| Audio seconds per day | 28,800 (~8 hours) |
+
+For higher limits, see [Groq's pricing](https://groq.com/pricing/).
 
 ## License
 
@@ -125,5 +168,5 @@ MIT
 
 ## Acknowledgments
 
-- [whisper.cpp](https://github.com/ggerganov/whisper.cpp) by Georgi Gerganov
-- [OpenAI Whisper](https://github.com/openai/whisper) for the original model
+- [Groq](https://groq.com/) for fast cloud inference
+- [OpenAI Whisper](https://github.com/openai/whisper) for the speech-to-text model
