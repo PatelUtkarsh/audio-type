@@ -1,7 +1,7 @@
 # AudioType Makefile
 # Voice-to-text macOS application using Groq API
 
-.PHONY: all build clean run app lint format help
+.PHONY: all build clean run app dev lint format help
 
 # Default target
 all: build app
@@ -33,6 +33,20 @@ app: build
 run: app
 	@echo "Starting AudioType..."
 	@open AudioType.app
+
+# Dev: kill, reset permissions, rebuild, install, and launch
+dev: 
+	@echo "Stopping AudioType..."
+	@pkill -f AudioType 2>/dev/null || true
+	@sleep 1
+	@echo "Resetting Accessibility permission..."
+	@tccutil reset Accessibility com.audiotype.app 2>/dev/null || true
+	@$(MAKE) app
+	@echo "Installing to /Applications..."
+	@rm -rf /Applications/AudioType.app
+	@cp -R AudioType.app /Applications/
+	@echo "Launching..."
+	@open /Applications/AudioType.app
 
 # Clean build artifacts
 clean:
@@ -77,6 +91,7 @@ help:
 	@echo "  release      Build release version"
 	@echo "  app          Create AudioType.app bundle"
 	@echo "  run          Build and run the app"
+	@echo "  dev          Kill, reset permissions, rebuild, install, launch"
 	@echo "  clean        Remove all build artifacts"
 	@echo "  lint         Lint Swift code with swiftlint"
 	@echo "  format       Format Swift code with swift-format"

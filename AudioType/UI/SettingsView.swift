@@ -31,7 +31,7 @@ struct SettingsView: View {
         if isApiKeySet {
           HStack(spacing: 4) {
             Image(systemName: "checkmark.circle.fill")
-              .foregroundColor(.green)
+              .foregroundColor(AudioTypeTheme.coral)
               .font(.caption)
             Text("API key configured")
               .foregroundColor(.secondary)
@@ -45,12 +45,14 @@ struct SettingsView: View {
             .font(.caption)
         }
 
-        Button("Get free API key") {
-          if let url = URL(string: "https://console.groq.com/keys") {
-            NSWorkspace.shared.open(url)
+        if !isApiKeySet {
+          Button("Get free API key") {
+            if let url = URL(string: "https://console.groq.com/keys") {
+              NSWorkspace.shared.open(url)
+            }
           }
+          .font(.caption)
         }
-        .font(.caption)
 
         Picker("Model", selection: $selectedModel) {
           ForEach(GroqModel.allCases, id: \.self) { model in
@@ -99,7 +101,7 @@ struct SettingsView: View {
         HStack {
           Text("Version")
           Spacer()
-          Text("2.0.0")
+          Text("2.1.0")
             .foregroundColor(.secondary)
         }
 
@@ -154,7 +156,7 @@ struct PermissionStatusView: View {
   var body: some View {
     HStack(spacing: 4) {
       Image(systemName: granted ? "checkmark.circle.fill" : "xmark.circle.fill")
-        .foregroundColor(granted ? .green : .red)
+        .foregroundColor(granted ? AudioTypeTheme.coral : .red)
       Text(granted ? "Granted" : "Not Granted")
         .foregroundColor(.secondary)
     }

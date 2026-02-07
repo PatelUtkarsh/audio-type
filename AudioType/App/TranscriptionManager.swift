@@ -25,6 +25,7 @@ class TranscriptionManager: ObservableObject {
 
   @Published private(set) var state: TranscriptionState = .idle
   @Published private(set) var isInitialized = false
+  @Published private(set) var audioLevel: Float = 0.0
 
   private var groqEngine: GroqEngine?
   private var audioRecorder: AudioRecorder?
@@ -40,6 +41,16 @@ class TranscriptionManager: ObservableObject {
 
     // Initialize components
     audioRecorder = AudioRecorder()
+    audioRecorder?.onLevelUpdate = { [weak self] level in
+      Task { @MainActor in
+        self?.audioLevel = level
+        NotificationCenter.default.post(
+          name: .audioLevelChanged,
+          object: nil,
+          userInfo: ["level": level]
+        )
+      }
+    }
     textInserter = TextInserter()
 
     // Initialize Groq engine (lightweight — no model download needed)
@@ -148,6 +159,13 @@ class TranscriptionManager: ObservableObject {
       let text = try await groqEngine.transcribe(samples: samples)
       let elapsed = CFAbsoluteTimeGetCurrent() - startTime
       logger.info("Transcription completed in \(elapsed, format: .fixed(precision: 2))s: \(text)")
+
+      // Ensure processing indicator is visible for at least 0.5s
+      let minDisplayTime = 0.5
+      let remaining = minDisplayTime - elapsed
+      if remaining > 0 {
+        try? await Task.sleep(for: .seconds(remaining))
+      }
 
       // Post-process and insert text with trailing space
       await MainActor.run {

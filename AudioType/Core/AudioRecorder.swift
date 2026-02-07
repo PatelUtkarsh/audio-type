@@ -7,6 +7,9 @@ class AudioRecorder {
   private let bufferLock = NSLock()
   private var isRecording = false
 
+  /// Current audio level (0.0–1.0), updated in real-time from the mic input.
+  var onLevelUpdate: ((Float) -> Void)?
+
   private let logger = Logger(subsystem: "com.audiotype", category: "AudioRecorder")
 
   // Whisper requires 16kHz mono audio
@@ -134,6 +137,12 @@ class AudioRecorder {
       samplesArray = Array(
         UnsafeBufferPointer(start: channelData[0], count: Int(buffer.frameLength)))
     }
+
+    // Compute RMS level for live waveform
+    let rms = sqrt(samplesArray.reduce(0) { $0 + $1 * $1 } / Float(max(samplesArray.count, 1)))
+    // Normalize: typical speech RMS is 0.01–0.15, scale aggressively to 0–1
+    let level = min(rms * 25, 1.0)
+    onLevelUpdate?(level)
 
     // Append to buffer
     bufferLock.lock()
