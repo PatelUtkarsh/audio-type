@@ -17,8 +17,7 @@ enum GroqModel: String, CaseIterable {
   static var current: GroqModel {
     get {
       if let saved = UserDefaults.standard.string(forKey: "groqModel"),
-        let model = GroqModel(rawValue: saved)
-      {
+        let model = GroqModel(rawValue: saved) {
         return model
       }
       return .whisperLargeV3Turbo
@@ -46,9 +45,9 @@ enum GroqEngineError: Error, LocalizedError {
       return "Groq API key not configured. Open Settings to add your key."
     case .wavEncodingFailed:
       return "Failed to encode audio to WAV format."
-    case .networkError(let message):
+    case let .networkError(message):
       return "Network error: \(message)"
-    case .httpError(let code, let message):
+    case let .httpError(code, message):
       return "Groq API error (HTTP \(code)): \(message)"
     case .invalidResponse:
       return "Invalid response from Groq API."
@@ -114,7 +113,8 @@ class GroqEngine {
     var body = Data()
 
     // file field
-    body.appendMultipart(boundary: boundary, name: "file", filename: "audio.wav",
+    body.appendMultipart(
+      boundary: boundary, name: "file", filename: "audio.wav",
       contentType: "audio/wav", data: wavData)
     // model field
     body.appendMultipart(boundary: boundary, name: "model", value: model.rawValue)
@@ -125,7 +125,7 @@ class GroqEngine {
     // temperature
     body.appendMultipart(boundary: boundary, name: "temperature", value: "0")
     // close boundary
-    body.append("--\(boundary)--\r\n".data(using: .utf8)!)
+    body.append(Data("--\(boundary)--\r\n".utf8))
 
     request.httpBody = body
 
@@ -222,18 +222,17 @@ extension Data {
   mutating func appendMultipart(
     boundary: String, name: String, filename: String, contentType: String, data: Data
   ) {
-    append("--\(boundary)\r\n".data(using: .utf8)!)
-    append(
-      "Content-Disposition: form-data; name=\"\(name)\"; filename=\"\(filename)\"\r\n".data(
-        using: .utf8)!)
-    append("Content-Type: \(contentType)\r\n\r\n".data(using: .utf8)!)
+    append(Data("--\(boundary)\r\n".utf8))
+    append(Data(
+      "Content-Disposition: form-data; name=\"\(name)\"; filename=\"\(filename)\"\r\n".utf8))
+    append(Data("Content-Type: \(contentType)\r\n\r\n".utf8))
     append(data)
-    append("\r\n".data(using: .utf8)!)
+    append(Data("\r\n".utf8))
   }
 
   mutating func appendMultipart(boundary: String, name: String, value: String) {
-    append("--\(boundary)\r\n".data(using: .utf8)!)
-    append("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".data(using: .utf8)!)
-    append("\(value)\r\n".data(using: .utf8)!)
+    append(Data("--\(boundary)\r\n".utf8))
+    append(Data("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".utf8))
+    append(Data("\(value)\r\n".utf8))
   }
 }
