@@ -2,10 +2,8 @@
 
 included:
   - AudioType
-  - WhisperWrapper
 
 excluded:
-  - whisper.cpp
   - .build
   - AudioType.app
 
