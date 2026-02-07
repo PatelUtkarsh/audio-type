@@ -42,7 +42,7 @@ If you prefer **100% offline transcription** with no data leaving your machine, 
 3. Generate a new API key
 4. Copy the key — you'll paste it into AudioType on first launch
 
-Groq's free tier is generous: ~2 hours of audio per hour, ~8 hours per day. More than enough for dictation.
+Groq's free tier is generous enough for typical dictation use. See [Groq's rate limits](https://console.groq.com/docs/rate-limits) for current details.
 
 ### 2. Install AudioType
 
@@ -151,16 +151,9 @@ fn key held -> Record audio -> Release fn key
 - Open Settings from the menu bar icon and enter your Groq API key
 - Get a free key at [console.groq.com/keys](https://console.groq.com/keys)
 
-## Rate Limits (Free Tier)
+## Rate Limits
 
-| Limit | Value |
-|-------|-------|
-| Requests per minute | 20 |
-| Requests per day | 2,000 |
-| Audio seconds per hour | 7,200 (~2 hours) |
-| Audio seconds per day | 28,800 (~8 hours) |
-
-For higher limits, see [Groq's pricing](https://groq.com/pricing/).
+Groq offers a free tier that is generous enough for typical dictation use. For current limits and pricing, see [Groq's rate limits](https://console.groq.com/docs/rate-limits) and [pricing](https://groq.com/pricing/).
 
 ## License
 
