@@ -6,7 +6,7 @@ struct OnboardingView: View {
   @State private var microphoneGranted = false
   @State private var accessibilityGranted = false
   @State private var speechRecognitionGranted = false
-  @State private var apiKeyConfigured = GroqEngine.isConfigured
+  @State private var anyCloudKeyConfigured = GroqEngine.isConfigured || OpenAIEngine.isConfigured
   @State private var apiKeyText = ""
   @State private var apiKeySaveError: String?
   @State private var hasAutoCompleted = false
@@ -84,13 +84,13 @@ struct OnboardingView: View {
 
             Spacer()
 
-            if apiKeyConfigured {
+            if anyCloudKeyConfigured {
               Image(systemName: "checkmark.circle.fill")
                 .foregroundColor(AudioTypeTheme.coral)
             }
           }
 
-          if !apiKeyConfigured {
+          if !anyCloudKeyConfigured {
             HStack {
               SecureField("Paste your API key", text: $apiKeyText)
                 .textFieldStyle(.roundedBorder)
@@ -134,9 +134,13 @@ struct OnboardingView: View {
 
       // Engine info badge
       if canContinue {
-        let engineName = GroqEngine.isConfigured ? "Groq Whisper" : "Apple Speech"
+        let isCloud = GroqEngine.isConfigured || OpenAIEngine.isConfigured
+        let engineName =
+          GroqEngine.isConfigured
+          ? "Groq Whisper"
+          : OpenAIEngine.isConfigured ? "OpenAI" : "Apple Speech"
         HStack(spacing: 4) {
-          Image(systemName: GroqEngine.isConfigured ? "cloud.fill" : "cpu")
+          Image(systemName: isCloud ? "cloud.fill" : "cpu")
             .font(.caption)
           Text("Will use \(engineName) for transcription")
             .font(.caption)
@@ -165,7 +169,7 @@ struct OnboardingView: View {
       microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
       accessibilityGranted = Permissions.checkAccessibility()
       speechRecognitionGranted = Permissions.isSpeechRecognitionAuthorized
-      apiKeyConfigured = GroqEngine.isConfigured
+      anyCloudKeyConfigured = GroqEngine.isConfigured || OpenAIEngine.isConfigured
 
       // Auto-complete when all required permissions are ready and at least one engine works
       if canContinue && !hasAutoCompleted {
@@ -178,14 +182,14 @@ struct OnboardingView: View {
   /// The user can proceed once mic + accessibility are granted AND at least one engine is usable.
   private var canContinue: Bool {
     microphoneGranted && accessibilityGranted
-      && (apiKeyConfigured || speechRecognitionGranted)
+      && (anyCloudKeyConfigured || speechRecognitionGranted)
   }
 
   private func checkPermissions() {
     microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     accessibilityGranted = Permissions.checkAccessibility()
     speechRecognitionGranted = Permissions.isSpeechRecognitionAuthorized
-    apiKeyConfigured = GroqEngine.isConfigured
+    anyCloudKeyConfigured = GroqEngine.isConfigured || OpenAIEngine.isConfigured
   }
 
   private func requestMicrophone() {
@@ -208,7 +212,7 @@ struct OnboardingView: View {
     apiKeySaveError = nil
     do {
       try GroqEngine.setApiKey(apiKeyText)
-      apiKeyConfigured = true
+      anyCloudKeyConfigured = true
       apiKeyText = ""
     } catch {
       apiKeySaveError = "Failed to save: \(error.localizedDescription)"

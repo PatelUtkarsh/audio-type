@@ -6,11 +6,19 @@ import SwiftUI
 struct SettingsView: View {
   @AppStorage("launchAtLogin") private var launchAtLogin = false
   @State private var selectedEngine = TranscriptionEngineType.current
-  @State private var selectedModel = GroqModel.current
+  @State private var selectedGroqModel = GroqModel.current
+  @State private var selectedOpenAIModel = OpenAIModel.current
   @State private var selectedLanguage = TranscriptionLanguage.current
-  @State private var apiKey: String = ""
-  @State private var isApiKeySet: Bool = GroqEngine.isConfigured
-  @State private var apiKeySaveError: String?
+
+  // Groq key state
+  @State private var groqApiKey: String = ""
+  @State private var isGroqKeySet: Bool = GroqEngine.isConfigured
+  @State private var groqKeySaveError: String?
+
+  // OpenAI key state
+  @State private var openaiApiKey: String = ""
+  @State private var isOpenAIKeySet: Bool = OpenAIEngine.isConfigured
+  @State private var openaiKeySaveError: String?
 
   var body: some View {
     Form {
@@ -30,7 +38,6 @@ struct SettingsView: View {
           }
         }
 
-        // Show which engine is actually active
         let activeName = TranscriptionManager.shared.activeEngineName
         if !activeName.isEmpty {
           HStack(spacing: 4) {
@@ -47,54 +54,62 @@ struct SettingsView: View {
 
       // MARK: - Groq Settings
       Section {
-        HStack {
-          SecureField("Groq API Key", text: $apiKey)
-            .textFieldStyle(.roundedBorder)
+        apiKeyField(
+          label: "Groq API Key",
+          text: $groqApiKey,
+          isSet: isGroqKeySet,
+          saveError: groqKeySaveError,
+          onSave: saveGroqKey
+        )
 
-          Button(isApiKeySet ? "Update" : "Save") {
-            saveApiKey()
-          }
-          .disabled(apiKey.isEmpty)
-        }
-
-        if isApiKeySet {
-          HStack(spacing: 4) {
-            Image(systemName: "checkmark.circle.fill")
-              .foregroundColor(AudioTypeTheme.coral)
-              .font(.caption)
-            Text("API key configured")
-              .foregroundColor(.secondary)
-              .font(.caption)
-          }
-        }
-
-        if let error = apiKeySaveError {
-          Text(error)
-            .foregroundColor(.red)
-            .font(.caption)
-        }
-
-        if !isApiKeySet {
+        if !isGroqKeySet {
           Button("Get free API key") {
-            if let url = URL(string: "https://console.groq.com/keys") {
-              NSWorkspace.shared.open(url)
-            }
+            openURL("https://console.groq.com/keys")
           }
           .font(.caption)
         }
 
-        Picker("Model", selection: $selectedModel) {
+        Picker("Model", selection: $selectedGroqModel) {
           ForEach(GroqModel.allCases, id: \.self) { model in
-            Text(model.displayName)
-              .tag(model)
+            Text(model.displayName).tag(model)
           }
         }
         .pickerStyle(.menu)
-        .onChange(of: selectedModel) { newModel in
+        .onChange(of: selectedGroqModel) { newModel in
           GroqModel.current = newModel
         }
       } header: {
         Text("Groq (Cloud)")
+      }
+
+      // MARK: - OpenAI Settings
+      Section {
+        apiKeyField(
+          label: "OpenAI API Key",
+          text: $openaiApiKey,
+          isSet: isOpenAIKeySet,
+          saveError: openaiKeySaveError,
+          onSave: saveOpenAIKey
+        )
+
+        if !isOpenAIKeySet {
+          Button("Get API key") {
+            openURL("https://platform.openai.com/api-keys")
+          }
+          .font(.caption)
+        }
+
+        Picker("Model", selection: $selectedOpenAIModel) {
+          ForEach(OpenAIModel.allCases, id: \.self) { model in
+            Text(model.displayName).tag(model)
+          }
+        }
+        .pickerStyle(.menu)
+        .onChange(of: selectedOpenAIModel) { newModel in
+          OpenAIModel.current = newModel
+        }
+      } header: {
+        Text("OpenAI (Cloud)")
       }
 
       // MARK: - Apple Speech Settings
@@ -121,7 +136,9 @@ struct SettingsView: View {
         HStack {
           Text("Permission")
           Spacer()
-          PermissionStatusView(granted: Permissions.isSpeechRecognitionAuthorized)
+          PermissionStatusView(
+            granted: Permissions.isSpeechRecognitionAuthorized
+          )
         }
 
         if !Permissions.isSpeechRecognitionAuthorized {
@@ -140,8 +157,7 @@ struct SettingsView: View {
       Section {
         Picker("Language", selection: $selectedLanguage) {
           ForEach(TranscriptionLanguage.allCases) { lang in
-            Text(lang.displayName)
-              .tag(lang)
+            Text(lang.displayName).tag(lang)
           }
         }
         .pickerStyle(.menu)
@@ -172,13 +188,15 @@ struct SettingsView: View {
         HStack {
           Text("Microphone")
           Spacer()
-          PermissionStatusView(granted: checkMicrophonePermission())
+          PermissionStatusView(granted: checkMicPermission())
         }
 
         HStack {
           Text("Accessibility")
           Spacer()
-          PermissionStatusView(granted: Permissions.checkAccessibility())
+          PermissionStatusView(
+            granted: Permissions.checkAccessibility()
+          )
         }
 
         Button("Open Accessibility Settings") {
@@ -199,33 +217,94 @@ struct SettingsView: View {
 
         Link(
           "View on GitHub",
-          destination: URL(string: "https://github.com/PatelUtkarsh/audio-type")!
+          destination: URL(
+            string: "https://github.com/PatelUtkarsh/audio-type"
+          )!
         )
       } header: {
         Text("About")
       }
     }
     .formStyle(.grouped)
-    .frame(width: 400, height: 580)
+    .frame(width: 400, height: 680)
   }
 
-  private func saveApiKey() {
-    apiKeySaveError = nil
+  // MARK: - Shared API key field
+
+  @ViewBuilder
+  private func apiKeyField(
+    label: String,
+    text: Binding<String>,
+    isSet: Bool,
+    saveError: String?,
+    onSave: @escaping () -> Void
+  ) -> some View {
+    HStack {
+      SecureField(label, text: text)
+        .textFieldStyle(.roundedBorder)
+
+      Button(isSet ? "Update" : "Save") {
+        onSave()
+      }
+      .disabled(text.wrappedValue.isEmpty)
+    }
+
+    if isSet {
+      HStack(spacing: 4) {
+        Image(systemName: "checkmark.circle.fill")
+          .foregroundColor(AudioTypeTheme.coral)
+          .font(.caption)
+        Text("API key configured")
+          .foregroundColor(.secondary)
+          .font(.caption)
+      }
+    }
+
+    if let error = saveError {
+      Text(error)
+        .foregroundColor(.red)
+        .font(.caption)
+    }
+  }
+
+  // MARK: - Actions
+
+  private func saveGroqKey() {
+    groqKeySaveError = nil
     do {
-      try GroqEngine.setApiKey(apiKey)
-      isApiKeySet = true
-      apiKey = ""  // Clear the field after saving
-      // Notify TranscriptionManager
+      try GroqEngine.setApiKey(groqApiKey)
+      isGroqKeySet = true
+      groqApiKey = ""
       Task { @MainActor in
         TranscriptionManager.shared.onApiKeyChanged()
       }
     } catch {
-      apiKeySaveError = "Failed to save: \(error.localizedDescription)"
+      groqKeySaveError = "Failed to save: \(error.localizedDescription)"
     }
   }
 
-  private func checkMicrophonePermission() -> Bool {
+  private func saveOpenAIKey() {
+    openaiKeySaveError = nil
+    do {
+      try OpenAIEngine.setApiKey(openaiApiKey)
+      isOpenAIKeySet = true
+      openaiApiKey = ""
+      Task { @MainActor in
+        TranscriptionManager.shared.onEngineConfigChanged()
+      }
+    } catch {
+      openaiKeySaveError = "Failed to save: \(error.localizedDescription)"
+    }
+  }
+
+  private func checkMicPermission() -> Bool {
     AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+  }
+
+  private func openURL(_ string: String) {
+    if let url = URL(string: string) {
+      NSWorkspace.shared.open(url)
+    }
   }
 
   private func setLaunchAtLogin(_ enabled: Bool) {

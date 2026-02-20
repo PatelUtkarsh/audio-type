@@ -60,7 +60,7 @@ class TranscriptionManager: ObservableObject {
 
     if !EngineResolver.anyEngineAvailable {
       logger.warning("No transcription engine available")
-      setState(.error("No engine available — add a Groq key or enable Apple Speech"))
+      setState(.error("No engine available — add a cloud API key or enable Apple Speech"))
     } else {
       logger.info("Transcription engine ready: \(engine.displayName)")
     }
@@ -93,7 +93,7 @@ class TranscriptionManager: ObservableObject {
       setState(.idle)
       logger.info("Engine config changed, active engine: \(engine.displayName)")
     } else {
-      setState(.error("No engine available — add a Groq key or enable Apple Speech"))
+      setState(.error("No engine available — add a cloud API key or enable Apple Speech"))
     }
   }
 
@@ -118,7 +118,7 @@ class TranscriptionManager: ObservableObject {
     }
 
     guard EngineResolver.anyEngineAvailable else {
-      setState(.error("No engine available — add a Groq key or enable Apple Speech"))
+      setState(.error("No engine available — add a cloud API key or enable Apple Speech"))
       return
     }
 
