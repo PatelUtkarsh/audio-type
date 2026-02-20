@@ -6,6 +6,7 @@ import Foundation
 enum TranscriptionEngineType: String, CaseIterable, Identifiable {
   case auto = "auto"
   case groq = "groq"
+  case openAI = "openAI"
   case appleSpeech = "appleSpeech"
 
   var id: String { rawValue }
@@ -14,13 +15,15 @@ enum TranscriptionEngineType: String, CaseIterable, Identifiable {
     switch self {
     case .auto: return "Auto (recommended)"
     case .groq: return "Groq Whisper (cloud)"
+    case .openAI: return "OpenAI Whisper (cloud)"
     case .appleSpeech: return "Apple Speech (on-device)"
     }
   }
 
   static var current: TranscriptionEngineType {
     get {
-      if let saved = UserDefaults.standard.string(forKey: "transcriptionEngine"),
+      if let saved = UserDefaults.standard.string(
+        forKey: "transcriptionEngine"),
         let engine = TranscriptionEngineType(rawValue: saved)
       {
         return engine
@@ -28,7 +31,9 @@ enum TranscriptionEngineType: String, CaseIterable, Identifiable {
       return .auto
     }
     set {
-      UserDefaults.standard.set(newValue.rawValue, forKey: "transcriptionEngine")
+      UserDefaults.standard.set(
+        newValue.rawValue, forKey: "transcriptionEngine"
+      )
     }
   }
 }
@@ -49,7 +54,7 @@ protocol TranscriptionEngine {
 
 // MARK: - Engine Resolver
 
-/// Decides which concrete engine to use based on the user preference and availability.
+/// Decides which concrete engine to use based on user preference and availability.
 enum EngineResolver {
   /// Returns the engine to use for the current transcription request.
   static func resolve() -> TranscriptionEngine {
@@ -58,19 +63,26 @@ enum EngineResolver {
     switch preference {
     case .groq:
       return GroqEngine()
+    case .openAI:
+      return OpenAIEngine()
     case .appleSpeech:
       return AppleSpeechEngine()
     case .auto:
-      // Prefer Groq when the user has a key configured, otherwise fall back.
+      // Prefer Groq, then OpenAI, then Apple Speech.
       if GroqEngine.isConfigured {
         return GroqEngine()
+      }
+      if OpenAIEngine.isConfigured {
+        return OpenAIEngine()
       }
       return AppleSpeechEngine()
     }
   }
 
-  /// `true` when at least one engine is usable — the app can proceed past onboarding.
+  /// `true` when at least one engine is usable.
   static var anyEngineAvailable: Bool {
-    GroqEngine.isConfigured || AppleSpeechEngine.isSupported
+    GroqEngine.isConfigured
+      || OpenAIEngine.isConfigured
+      || AppleSpeechEngine.isSupported
   }
 }

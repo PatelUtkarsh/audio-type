@@ -4,7 +4,7 @@
 
 ## Project Overview
 
-AudioType is a **native macOS menu bar app** for voice-to-text. Users hold the `fn` key to record, release to transcribe, and the result is typed into the focused app. It supports two transcription backends: **Groq Whisper** (cloud) and **Apple Speech** (on-device). If no Groq API key is configured, the app falls back to Apple's on-device `SFSpeechRecognizer` automatically. It runs as an `LSUIElement` (no dock icon), built with Swift Package Manager (not Xcode projects).
+AudioType is a **native macOS menu bar app** for voice-to-text. Users hold the `fn` key to record, release to transcribe, and the result is typed into the focused app. It supports three transcription backends: **Groq Whisper** (cloud), **OpenAI Whisper** (cloud), and **Apple Speech** (on-device). If no cloud API key is configured, the app falls back to Apple's on-device `SFSpeechRecognizer` automatically. It runs as an `LSUIElement` (no dock icon), built with Swift Package Manager (not Xcode projects).
 
 ## Build Commands
 
@@ -72,11 +72,13 @@ Releases (`.github/workflows/release.yml`) trigger on `v*` tags and produce `Aud
 
 ### Transcription Engine System
 
-The app uses a **protocol-based engine abstraction** to support multiple speech-to-text backends:
+The app uses a **protocol-based engine abstraction** with a shared base class to support multiple speech-to-text backends:
 
 ```
 TranscriptionEngine (protocol)
-├── GroqEngine          — Cloud-based, Groq Whisper API, requires API key
+├── WhisperAPIEngine (base class) — shared WAV encoding, multipart HTTP, response parsing
+│   ├── GroqEngine      — Cloud, Groq Whisper API, requires API key
+│   └── OpenAIEngine    — Cloud, OpenAI Whisper/GPT-4o API, requires API key
 └── AppleSpeechEngine   — On-device, Apple SFSpeechRecognizer, no API key needed
 ```
 
@@ -84,11 +86,12 @@ TranscriptionEngine (protocol)
 
 | Mode | Behavior |
 |------|----------|
-| **Auto** (default) | Groq if API key exists, otherwise Apple Speech |
+| **Auto** (default) | Groq if key exists → OpenAI if key exists → Apple Speech |
 | **Groq Whisper** | Always use Groq (fails if no key) |
+| **OpenAI Whisper** | Always use OpenAI (fails if no key) |
 | **Apple Speech** | Always use on-device recognition |
 
-Both engines implement a single method: `transcribe(samples: [Float]) async throws -> String` — accepting 16 kHz mono Float32 PCM samples from `AudioRecorder`.
+All engines implement a single method: `transcribe(samples: [Float]) async throws -> String` — accepting 16 kHz mono Float32 PCM samples from `AudioRecorder`.
 
 ### Data Flow
 
@@ -100,11 +103,11 @@ fn key held → HotKeyManager → TranscriptionManager.startRecording()
 fn key released → TranscriptionManager.stopRecordingAndTranscribe()
                                     ↓
                         EngineResolver.resolve() → TranscriptionEngine
-                           ↓                              ↓
-                      GroqEngine                  AppleSpeechEngine
-                   (HTTP multipart →              (SFSpeechAudioBuffer-
-                    Groq Whisper API)              RecognitionRequest)
-                           ↓                              ↓
+                     ↓                  ↓                     ↓
+                GroqEngine         OpenAIEngine        AppleSpeechEngine
+             (WhisperAPIEngine   (WhisperAPIEngine   (SFSpeechAudioBuffer-
+              → Groq API)         → OpenAI API)       RecognitionRequest)
+                     ↓                  ↓                     ↓
                               transcribed text
                                     ↓
                          TextPostProcessor (corrections)
@@ -122,7 +125,7 @@ fn key released → TranscriptionManager.stopRecordingAndTranscribe()
 | Accessibility | Keyboard simulation (TextInserter) | Granted via System Settings |
 | Speech Recognition | Apple Speech engine (on-device) | `NSSpeechRecognitionUsageDescription` |
 
-Speech recognition permission is requested on-demand the first time the Apple Speech engine is used. The Groq engine does not require this permission.
+Speech recognition permission is requested on-demand the first time the Apple Speech engine is used. Cloud engines (Groq, OpenAI) do not require this permission.
 
 ## Project Structure
 
@@ -135,7 +138,9 @@ AudioType/
   Core/                 # Business logic & transcription engines
     AudioRecorder.swift       # AVAudioEngine capture, PCM→16kHz resampling, RMS level
     TranscriptionEngine.swift # TranscriptionEngine protocol, TranscriptionEngineType, EngineResolver
-    GroqEngine.swift          # Groq Whisper API client, WAV encoding, multipart upload
+    WAVEncoder.swift          # WhisperAPIEngine base class, WAVEncoder, WhisperAPIConfig, Data helpers
+    GroqEngine.swift          # GroqEngine subclass, GroqModel enum, TranscriptionLanguage
+    OpenAIEngine.swift        # OpenAIEngine subclass, OpenAIModel enum
     AppleSpeechEngine.swift   # Apple SFSpeechRecognizer on-device transcription
     HotKeyManager.swift       # CGEventTap for fn key hold detection
     TextInserter.swift        # CGEvent keyboard simulation to type into focused app
@@ -143,11 +148,11 @@ AudioType/
   UI/                   # SwiftUI views
     RecordingOverlay.swift  # Floating waveform (recording) / thinking dots (processing)
     OnboardingView.swift    # First-launch permission setup (API key optional)
-    SettingsView.swift      # Engine picker, API key, model, language, permissions
+    SettingsView.swift      # Engine picker, API keys, models, language, permissions
     Theme.swift             # Brand color system (coral palette, adaptive dark/light)
   Utilities/
     Permissions.swift       # Microphone, Accessibility, Speech Recognition permission helpers
-    KeychainHelper.swift    # File-based secret storage (Application Support, 0600 perms)
+    KeychainHelper.swift    # macOS Keychain-based secret storage
   Resources/
     Assets.xcassets/        # Asset catalog (currently empty)
 Resources/
@@ -170,9 +175,9 @@ Resources/
 
 ### Types & Naming
 - **Protocols** for abstractions with multiple implementations: `TranscriptionEngine`
-- **Classes** for stateful objects with reference semantics: `TranscriptionManager`, `AudioRecorder`, `GroqEngine`, `AppleSpeechEngine`
-- **Enums** for namespaced constants and error types: `AudioTypeTheme`, `GroqEngineError`, `AppleSpeechError`, `TranscriptionEngineType`, `KeychainHelper`
-- **Structs** for SwiftUI views: `RecordingOverlay`, `SettingsView`
+- **Classes** for stateful objects with reference semantics: `TranscriptionManager`, `AudioRecorder`, `WhisperAPIEngine`, `GroqEngine`, `OpenAIEngine`, `AppleSpeechEngine`
+- **Enums** for namespaced constants and error types: `AudioTypeTheme`, `WhisperAPIError`, `AppleSpeechError`, `TranscriptionEngineType`, `KeychainHelper`
+- **Structs** for SwiftUI views and config: `RecordingOverlay`, `SettingsView`, `WhisperAPIConfig`
 - camelCase for properties/methods, PascalCase for types
 - Identifier names: min 1 char, max 50 chars; `x`, `y`, `i`, `j`, `k` are allowed
 
@@ -184,7 +189,8 @@ Resources/
 - Errors shown to user go through `TranscriptionState.error(String)`
 
 ### Patterns Used
-- **Protocol abstraction**: `TranscriptionEngine` with `GroqEngine` and `AppleSpeechEngine` implementations
+- **Protocol abstraction**: `TranscriptionEngine` with `WhisperAPIEngine` base class and `AppleSpeechEngine`
+- **Inheritance for shared logic**: `WhisperAPIEngine` base class handles WAV encoding, multipart HTTP, response parsing; `GroqEngine` and `OpenAIEngine` are thin subclasses supplying config
 - **Resolver pattern**: `EngineResolver.resolve()` picks the engine at runtime based on config
 - **Singleton**: `TranscriptionManager.shared`, `TextPostProcessor.shared`, `AudioLevelMonitor.shared`
 - **`@MainActor`** on `TranscriptionManager` — all state mutations on main thread
@@ -193,7 +199,16 @@ Resources/
 - **Closures** for callbacks: `HotKeyManager(callback:)`, `audioRecorder.onLevelUpdate`
 - **`os.log` Logger** with subsystem `"com.audiotype"` — use per-class categories
 
-### Adding a New Transcription Engine
+### Adding a New Cloud Transcription Provider
+1. Create a new subclass of `WhisperAPIEngine` in `AudioType/Core/`
+2. Override `config` (with `WhisperAPIConfig`) and `currentModel` — that's it for the engine
+3. Add a model enum if the provider has multiple models
+4. Add static convenience methods (`isConfigured`, `setApiKey`, `clearApiKey`)
+5. Add a case to `TranscriptionEngineType` and update `EngineResolver.resolve()`
+6. Update `EngineResolver.anyEngineAvailable` if the engine has standalone availability
+7. Add UI in `SettingsView.swift` (API key field, model picker)
+
+### Adding a Non-Whisper Engine
 1. Create a new class conforming to `TranscriptionEngine` in `AudioType/Core/`
 2. Implement `displayName`, `isAvailable`, and `transcribe(samples:)`
 3. Add a case to `TranscriptionEngineType` and update `EngineResolver.resolve()`
@@ -214,7 +229,7 @@ All colors live in `AudioType/UI/Theme.swift` (`AudioTypeTheme` enum). Never use
 - **Error**: `exclamationmark.triangle.fill`, tinted `.systemRed`
 
 ### Security
-- API keys stored in `~/Library/Application Support/AudioType/.secrets` with `0600` permissions
+- API keys stored in macOS Keychain via `KeychainHelper` (Security framework)
 - Never commit `.env`, credentials, or API keys
 - Audio is recorded in-memory only — never written to disk
 

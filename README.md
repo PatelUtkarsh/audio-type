@@ -5,22 +5,23 @@ A native macOS menu bar app for voice-to-text. Hold **fn** to record, release to
 ## Features
 
 - **Hold fn key** to record voice, release to transcribe and insert text
-- **Cloud-powered transcription** via [Groq](https://groq.com/) — uses Whisper Large V3 for high accuracy
+- **Multiple cloud providers** — [Groq](https://groq.com/) and [OpenAI](https://openai.com/) Whisper APIs for high accuracy
+- **On-device fallback** — Apple Speech (no API key or internet needed)
 - **Works in any app** — types transcribed text into the focused application
-- **Self-serve** — bring your own free Groq API key
+- **Self-serve** — bring your own API key (Groq free tier, or OpenAI)
 - **Lightweight** — runs in menu bar, no dock icon
 
 ## Privacy & Data
 
-> **Important:** AudioType previously ran transcription 100% locally using whisper.cpp. We found the local model quality insufficient for reliable daily use, so we switched to Groq's cloud-based Whisper API which provides significantly better accuracy and speed.
+> **Important:** AudioType previously ran transcription 100% locally using whisper.cpp. We found the local model quality insufficient for reliable daily use, so we switched to cloud-based Whisper APIs which provide significantly better accuracy and speed. An on-device Apple Speech fallback is available if you prefer no cloud usage.
 
 **What this means:**
 
-- Audio recordings **are sent to Groq's servers** for transcription
-- An internet connection **is required** for transcription
-- Your Groq API key is stored locally in Application Support with restricted file permissions
-- No audio is saved to disk locally — it is recorded in memory, sent to Groq, and discarded
-- See [Groq's data policy](https://groq.com/privacy-policy/) for how they handle your data
+- When using a cloud engine, audio recordings **are sent to the provider's servers** for transcription
+- An internet connection **is required** for cloud transcription (not needed for Apple Speech)
+- Your API keys are stored locally in the macOS Keychain
+- No audio is saved to disk locally — it is recorded in memory, sent to the cloud provider, and discarded
+- See [Groq's data policy](https://groq.com/privacy-policy/) or [OpenAI's data policy](https://openai.com/policies/privacy-policy) for how they handle your data
 
 ### Looking for the privacy-focused local version?
 
@@ -30,12 +31,18 @@ If you prefer **100% offline transcription** with no data leaving your machine, 
 
 - macOS 14.0 (Sonoma) or later
 - Apple Silicon or Intel Mac
-- Internet connection
-- Free [Groq API key](https://console.groq.com/keys)
+- Internet connection (for cloud engines; not needed for Apple Speech)
+- A cloud API key (optional — app works without one using Apple Speech):
+  - Free [Groq API key](https://console.groq.com/keys), or
+  - [OpenAI API key](https://platform.openai.com/api-keys)
 
 ## Setup
 
-### 1. Get a Groq API Key (free)
+### 1. Get an API Key (optional)
+
+AudioType works out of the box using Apple's on-device speech recognition. For higher accuracy, configure a cloud provider:
+
+#### Option A: Groq (free tier)
 
 1. Go to [console.groq.com/keys](https://console.groq.com/keys)
 2. Create an account or sign in
@@ -43,6 +50,13 @@ If you prefer **100% offline transcription** with no data leaving your machine, 
 4. Copy the key — you'll paste it into AudioType on first launch
 
 Groq's free tier is generous enough for typical dictation use. See [Groq's rate limits](https://console.groq.com/docs/rate-limits) for current details.
+
+#### Option B: OpenAI
+
+1. Go to [platform.openai.com/api-keys](https://platform.openai.com/api-keys)
+2. Create an account or sign in
+3. Generate a new API key
+4. Copy the key — you'll paste it into AudioType Settings
 
 ### 2. Install AudioType
 
@@ -78,7 +92,10 @@ On first launch, AudioType will ask you to:
 
 1. **Grant Microphone access** — to record your voice
 2. **Grant Accessibility access** — to type text into other apps
-3. **Enter your Groq API key** — for cloud transcription
+3. **Grant Speech Recognition** — for on-device Apple Speech
+4. **Enter a Groq API key** (optional) — for cloud transcription
+
+You can skip the API key step to use Apple Speech. Additional cloud providers (OpenAI) can be configured later in Settings.
 
 ## Permissions
 
@@ -86,21 +103,29 @@ On first launch, AudioType will ask you to:
 |------------|---------|
 | **Microphone** | Record voice for transcription |
 | **Accessibility** | Detect fn key and type text into apps |
-| **Internet** | Send audio to Groq for transcription |
+| **Speech Recognition** | On-device Apple Speech transcription |
+| **Internet** | Send audio to cloud provider (Groq or OpenAI) |
 
 ## Usage
 
 1. **Launch AudioType** — appears in menu bar with a waveform icon
-2. **Hold fn key** — starts recording (overlay shows "Recording...")
-3. **Release fn key** — sends audio to Groq and types the result
+2. **Hold fn key** — starts recording (overlay shows waveform)
+3. **Release fn key** — sends audio to the active engine and types the result
 4. **Click menu bar icon** — access Settings or Quit
 
 ### Settings
 
-- **Groq API Key** — add or update your key
+- **Engine Selection**:
+  - `Auto` (default) — uses Groq if configured, then OpenAI, then Apple Speech
+  - `Groq Whisper` — always use Groq (requires API key)
+  - `OpenAI Whisper` — always use OpenAI (requires API key)
+  - `Apple Speech` — always use on-device recognition
+- **Groq API Key** — add or update your Groq key
+- **OpenAI API Key** — add or update your OpenAI key
 - **Model Selection**:
-  - `Whisper Large V3 Turbo` — faster, slightly lower accuracy (default)
-  - `Whisper Large V3` — highest accuracy, slightly slower
+  - Groq: `Whisper Large V3 Turbo` (default, faster) or `Whisper Large V3` (most accurate)
+  - OpenAI: `GPT-4o Mini Transcribe` (default, balanced), `GPT-4o Transcribe` (best), or `Whisper V2` (cheapest)
+- **Language** — auto-detect or choose from 25+ languages
 
 ## How It Works
 
@@ -111,8 +136,8 @@ fn key held -> Record audio -> Release fn key
                             Encode audio as WAV
                                     |
                                     v
-                            Send to Groq API
-                            (Whisper Large V3)
+                            EngineResolver picks engine
+                            (Groq / OpenAI / Apple Speech)
                                     |
                                     v
                             Text post-processing
@@ -127,9 +152,11 @@ fn key held -> Record audio -> Release fn key
 
 - **Swift** — native macOS app
 - **Groq API** — cloud speech-to-text (Whisper Large V3)
+- **OpenAI API** — cloud speech-to-text (GPT-4o Transcribe / Whisper)
+- **Apple Speech** — on-device speech-to-text (SFSpeechRecognizer)
 - **AVAudioEngine** — low-latency audio capture
 - **CGEvent** — global hotkey detection and keyboard simulation
-- **Local secure storage** — API key stored with restricted file permissions
+- **macOS Keychain** — secure API key storage
 
 ## Troubleshooting
 
@@ -142,18 +169,21 @@ fn key held -> Record audio -> Release fn key
 - Ensure your microphone is working in other apps
 
 ### Transcription fails
-- Check your internet connection
-- Verify your Groq API key is valid in Settings
+- Check your internet connection (for cloud engines)
+- Verify your API key is valid in Settings
 - If you see "Rate limited", wait a moment and try again
-- Check [Groq status](https://status.groq.com/) for service issues
+- Check [Groq status](https://status.groq.com/) or [OpenAI status](https://status.openai.com/) for service issues
 
 ### "API key required" error
-- Open Settings from the menu bar icon and enter your Groq API key
-- Get a free key at [console.groq.com/keys](https://console.groq.com/keys)
+- Open Settings from the menu bar icon and enter your API key
+- Get a free Groq key at [console.groq.com/keys](https://console.groq.com/keys)
+- Or use Apple Speech (no key required) by setting engine to Auto or Apple Speech
 
 ## Rate Limits
 
 Groq offers a free tier that is generous enough for typical dictation use. For current limits and pricing, see [Groq's rate limits](https://console.groq.com/docs/rate-limits) and [pricing](https://groq.com/pricing/).
+
+OpenAI uses pay-as-you-go pricing. See [OpenAI's pricing](https://openai.com/api/pricing/) for current rates.
 
 ## License
 
@@ -162,5 +192,5 @@ MIT
 ## Acknowledgments
 
 - [Groq](https://groq.com/) for fast cloud inference
-- [OpenAI Whisper](https://github.com/openai/whisper) for the speech-to-text model
+- [OpenAI](https://openai.com/) for Whisper and GPT-4o transcription models
 - This project is entirely vibe coded with AI assistance

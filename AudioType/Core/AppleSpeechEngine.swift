@@ -30,7 +30,7 @@ enum AppleSpeechError: Error, LocalizedError {
 /// On-device speech-to-text using Apple's Speech framework (`SFSpeechRecognizer`).
 ///
 /// This engine requires no API key and works offline when on-device recognition is
-/// available (macOS 13+). It acts as the fallback when no Groq API key is configured.
+/// available (macOS 13+). It acts as the fallback when no cloud API key is configured.
 class AppleSpeechEngine: TranscriptionEngine {
 
   private let logger = Logger(subsystem: "com.audiotype", category: "AppleSpeechEngine")
