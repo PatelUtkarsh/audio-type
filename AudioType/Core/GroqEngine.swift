@@ -9,7 +9,7 @@ enum GroqModel: String, CaseIterable {
   var displayName: String {
     switch self {
     case .whisperLargeV3Turbo: return "Whisper Large V3 Turbo (faster)"
-    case .whisperLargeV3: return "Whisper Large V3 (most accurate)"
+    case .whisperLargeV3: return "Whisper Large V3 (best, default)"
     }
   }
 
@@ -20,7 +20,7 @@ enum GroqModel: String, CaseIterable {
       {
         return model
       }
-      return .whisperLargeV3Turbo
+      return .whisperLargeV3
     }
     set {
       UserDefaults.standard.set(newValue.rawValue, forKey: "groqModel")
