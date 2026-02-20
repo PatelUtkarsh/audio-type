@@ -160,7 +160,7 @@ enum WhisperAPIError: Error, LocalizedError {
       return "Invalid API endpoint URL."
     case .networkError(let message):
       return "Network error: \(message)"
-    case .httpError(let code, let message):
+    case let .httpError(code, message):
       return "API error (HTTP \(code)): \(message)"
     case .invalidResponse:
       return "Invalid response from API."

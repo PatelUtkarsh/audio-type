@@ -16,8 +16,7 @@ enum GroqModel: String, CaseIterable {
   static var current: GroqModel {
     get {
       if let saved = UserDefaults.standard.string(forKey: "groqModel"),
-        let model = GroqModel(rawValue: saved)
-      {
+        let model = GroqModel(rawValue: saved) {
         return model
       }
       return .whisperLargeV3
@@ -102,8 +101,7 @@ enum TranscriptionLanguage: String, CaseIterable, Identifiable {
     get {
       if let saved = UserDefaults.standard.string(
         forKey: "transcriptionLanguage"),
-        let lang = TranscriptionLanguage(rawValue: saved)
-      {
+        let lang = TranscriptionLanguage(rawValue: saved) {
         return lang
       }
       return .auto
