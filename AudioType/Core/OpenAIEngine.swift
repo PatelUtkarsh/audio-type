@@ -19,8 +19,7 @@ enum OpenAIModel: String, CaseIterable {
     get {
       if let saved = UserDefaults.standard.string(
         forKey: "openaiModel"),
-        let model = OpenAIModel(rawValue: saved)
-      {
+        let model = OpenAIModel(rawValue: saved) {
         return model
       }
       return .gpt4oMiniTranscribe

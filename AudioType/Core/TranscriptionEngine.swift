@@ -4,10 +4,10 @@ import Foundation
 
 /// User-facing choice for which transcription backend to use.
 enum TranscriptionEngineType: String, CaseIterable, Identifiable {
-  case auto = "auto"
-  case groq = "groq"
-  case openAI = "openAI"
-  case appleSpeech = "appleSpeech"
+  case auto
+  case groq
+  case openAI
+  case appleSpeech
 
   var id: String { rawValue }
 
@@ -24,8 +24,7 @@ enum TranscriptionEngineType: String, CaseIterable, Identifiable {
     get {
       if let saved = UserDefaults.standard.string(
         forKey: "transcriptionEngine"),
-        let engine = TranscriptionEngineType(rawValue: saved)
-      {
+        let engine = TranscriptionEngineType(rawValue: saved) {
         return engine
       }
       return .auto

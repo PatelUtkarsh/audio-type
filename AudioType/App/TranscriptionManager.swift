@@ -11,7 +11,7 @@ enum TranscriptionState: Equatable {
     switch (lhs, rhs) {
     case (.idle, .idle), (.recording, .recording), (.processing, .processing):
       return true
-    case (.error(let a), .error(let b)):
+    case let (.error(a), .error(b)):
       return a == b
     default:
       return false
