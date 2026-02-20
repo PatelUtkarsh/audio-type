@@ -22,6 +22,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // Hide dock icon
     NSApp.setActivationPolicy(.accessory)
 
+    // Migrate any secrets from legacy file store to Keychain
+    KeychainHelper.migrateFromFileStoreIfNeeded()
+
     // Initialize managers
     transcriptionManager = TranscriptionManager.shared
     menuBarController = MenuBarController(transcriptionManager: transcriptionManager)
