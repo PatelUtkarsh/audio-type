@@ -4,15 +4,16 @@ A native macOS application providing instant voice-to-text functionality.
 
 ## Overview
 
-**AudioType** captures voice via a global hotkey, sends audio to the Groq API (Whisper Large V3) for cloud transcription, and simulates keyboard typing to insert text into any application.
+**AudioType** captures voice via a global hotkey, transcribes it using either **Groq Whisper** (cloud) or **Apple Speech** (on-device), and simulates keyboard typing to insert text into any application. If no Groq API key is configured, the app falls back to Apple's on-device `SFSpeechRecognizer` automatically.
 
 ### Key Design Goals
 
 1. **Instant activation** - Sub-100ms from hotkey press to recording start
 2. **High-quality transcription** - Whisper Large V3 via Groq for best accuracy
-3. **Universal text insertion** - Works in any app via keyboard simulation
-4. **Minimal footprint** - Menu bar app, no dock icon, lightweight
-5. **Self-serve** - Users provide their own free Groq API key
+3. **Works without an API key** - Apple Speech provides on-device fallback
+4. **Universal text insertion** - Works in any app via keyboard simulation
+5. **Minimal footprint** - Menu bar app, no dock icon, lightweight
+6. **Self-serve** - Users can optionally provide their own free Groq API key
 
 ---
 
@@ -24,22 +25,28 @@ A native macOS application providing instant voice-to-text functionality.
 +---------------------------------------------------------------------+
 |                                                                     |
 |  +--------------+    +--------------+    +----------------------+   |
-|  |   HotKey     |--->|   Audio      |--->|   Groq Engine        |   |
-|  |   Manager    |    |   Recorder   |    |   (Cloud API)        |   |
+|  |   HotKey     |--->|   Audio      |--->|   Engine Resolver    |   |
+|  |   Manager    |    |   Recorder   |    |   (Auto/Groq/Apple) |   |
 |  +--------------+    +--------------+    +----------------------+   |
-|         |                   |                       |               |
-|         |                   |                       v               |
+|         |                   |                   |           |       |
+|         |                   |                   v           v       |
+|         |                   |            +-----------+ +---------+  |
+|         |                   |            |   Groq    | |  Apple  |  |
+|         |                   |            |   Engine  | |  Speech |  |
+|         |                   |            | (Cloud)   | | (Local) |  |
+|         |                   |            +-----------+ +---------+  |
+|         |                   |                   |           |       |
+|         |                   |                   v           v       |
 |         |                   |            +----------------------+   |
 |         |                   |            |   Text Inserter      |   |
 |         |                   |            |   (CGEventPost)      |   |
 |         |                   |            +----------------------+   |
-|         |                   |                       |               |
 |         v                   v                       v               |
 |  +-------------------------------------------------------------+   |
 |  |                    UI Layer (SwiftUI)                         |   |
 |  |  +-------------+  +-------------+  +---------------------+  |   |
 |  |  | Menu Bar    |  | Recording   |  | Settings Window     |  |   |
-|  |  | Status Item |  | Overlay     |  | (API Key, Model)    |  |   |
+|  |  | Status Item |  | Overlay     |  | (Engine, Key, Model)|  |   |
 |  |  +-------------+  +-------------+  +---------------------+  |   |
 |  +-------------------------------------------------------------+   |
 |                                                                     |
@@ -72,7 +79,7 @@ A native macOS application providing instant voice-to-text functionality.
 
 **Technology:**
 - `AVAudioEngine` for low-latency capture
-- Output format: 16kHz mono PCM Float32 (optimal for Whisper)
+- Output format: 16kHz mono PCM Float32 (optimal for Whisper and SFSpeechRecognizer)
 
 **Key Components:**
 ```swift
@@ -90,7 +97,38 @@ class AudioRecorder {
 
 ---
 
-### 3. Groq Engine (Cloud API)
+### 3. Transcription Engine System
+
+The app uses a **protocol-based engine abstraction** to support multiple backends:
+
+```swift
+protocol TranscriptionEngine {
+    var displayName: String { get }
+    var isAvailable: Bool { get }
+    func transcribe(samples: [Float]) async throws -> String
+}
+```
+
+Both engines accept the same input: 16 kHz mono Float32 PCM samples from `AudioRecorder`.
+
+#### Engine Resolver
+
+`EngineResolver` selects the active engine at runtime based on user preference (`TranscriptionEngineType`):
+
+| Mode | Behavior |
+|------|----------|
+| **Auto** (default) | Groq if API key exists, otherwise Apple Speech |
+| **Groq Whisper** | Always use Groq (fails if no key) |
+| **Apple Speech** | Always use on-device recognition |
+
+```swift
+enum EngineResolver {
+    static func resolve() -> TranscriptionEngine
+    static var anyEngineAvailable: Bool
+}
+```
+
+#### 3a. Groq Engine (Cloud API)
 
 **Purpose:** Transcribe audio to text using Groq's hosted Whisper models.
 
@@ -99,7 +137,7 @@ class AudioRecorder {
 - Sends multipart/form-data POST to `https://api.groq.com/openai/v1/audio/transcriptions`
 - Parses JSON response containing transcribed text
 
-#### API Details
+##### API Details
 
 | Parameter | Value |
 |-----------|-------|
@@ -109,7 +147,7 @@ class AudioRecorder {
 | Max file size | 25 MB (free tier) |
 | Response | `{"text": "..."}` |
 
-#### Model Options
+##### Model Options
 
 | Model | Speed | Accuracy | Cost |
 |-------|-------|----------|------|
@@ -118,15 +156,14 @@ class AudioRecorder {
 
 **Default Model:** `whisper-large-v3-turbo`
 
-#### API Key Management
+##### API Key Management
 
-- Stored in macOS Keychain via `Security` framework
-- Service identifier: `com.audiotype.app`
+- Stored in `~/Library/Application Support/AudioType/.secrets` with `0600` permissions
 - Never written to UserDefaults or logged
-- User provides their own key (self-serve)
+- User provides their own key (self-serve, optional)
 
 ```swift
-class GroqEngine {
+class GroqEngine: TranscriptionEngine {
     func transcribe(samples: [Float]) async throws -> String
     static func setApiKey(_ key: String) throws
     static var apiKey: String?
@@ -134,7 +171,7 @@ class GroqEngine {
 }
 ```
 
-#### Free Tier Rate Limits
+##### Free Tier Rate Limits
 
 | Limit | Value |
 |-------|-------|
@@ -142,6 +179,34 @@ class GroqEngine {
 | Requests per day | 2,000 |
 | Audio seconds per hour | 7,200 (~2 hrs) |
 | Audio seconds per day | 28,800 (~8 hrs) |
+
+#### 3b. Apple Speech Engine (On-Device)
+
+**Purpose:** Transcribe audio to text using Apple's `SFSpeechRecognizer` — no API key or internet required (when on-device recognition is available).
+
+**Integration:**
+- Converts `[Float]` PCM samples into an `AVAudioPCMBuffer`
+- Feeds the buffer to `SFSpeechAudioBufferRecognitionRequest`
+- Prefers on-device recognition (`requiresOnDeviceRecognition = true`) when supported
+- Falls back to server-based Apple recognition if on-device is unavailable
+- Maps the app's `TranscriptionLanguage` to a `Locale` for the recognizer
+- Requests authorization on first use if status is `.notDetermined`
+
+```swift
+class AppleSpeechEngine: TranscriptionEngine {
+    func transcribe(samples: [Float]) async throws -> String
+    static var isSupported: Bool
+    static func requestAuthorization() async -> Bool
+}
+```
+
+**Permissions Required:**
+- Speech Recognition (`NSSpeechRecognitionUsageDescription`)
+
+**Limitations compared to Groq:**
+- Lower accuracy for technical terms and mixed-language speech
+- On-device model availability depends on macOS version and downloaded languages
+- No model selection (uses system default)
 
 ---
 
@@ -180,13 +245,18 @@ class GroqEngine {
 - Positioned at bottom center of screen
 
 #### Settings Window
-- Groq API key management (SecureField + Keychain storage)
+- Engine picker (Auto / Groq Whisper / Apple Speech)
+- Groq API key management (SecureField + file-based storage)
 - Model selection (Turbo / Large V3)
+- Language selection
+- Apple Speech status and permission grant
 - Launch at login toggle
 - Permission status display
 
 #### Onboarding Window
-- First-launch flow: Microphone -> Accessibility -> API Key
+- First-launch flow: Microphone -> Accessibility -> Speech Recognition -> API Key (optional)
+- API key step can be skipped to use Apple Speech
+- Shows which engine will be active based on configuration
 - Link to get free Groq API key
 
 ---
@@ -204,22 +274,24 @@ AudioType/
 |   |-- Core/
 |   |   |-- HotKeyManager.swift         # Global hotkey handling
 |   |   |-- AudioRecorder.swift         # Microphone capture
+|   |   |-- TranscriptionEngine.swift   # Protocol, EngineType enum, EngineResolver
 |   |   |-- GroqEngine.swift            # Groq API client + WAV encoding
+|   |   |-- AppleSpeechEngine.swift     # Apple SFSpeechRecognizer on-device engine
 |   |   |-- TextPostProcessor.swift     # Text corrections
 |   |   +-- TextInserter.swift          # Keyboard simulation
 |   |
 |   |-- UI/
-|   |   |-- SettingsView.swift          # Settings window
+|   |   |-- SettingsView.swift          # Settings window (engine picker, API key, etc.)
 |   |   |-- RecordingOverlay.swift      # Recording indicator
-|   |   +-- OnboardingView.swift        # First-launch setup
+|   |   |-- OnboardingView.swift        # First-launch setup (API key optional)
+|   |   +-- Theme.swift                 # Brand color system
 |   |
 |   |-- Utilities/
-|   |   |-- Permissions.swift           # Check/request permissions
-|   |   +-- KeychainHelper.swift        # Keychain read/write for API key
+|   |   |-- Permissions.swift           # Mic, Accessibility, Speech Recognition helpers
+|   |   +-- KeychainHelper.swift        # File-based secret storage
 |   |
 |   +-- Resources/
-|       |-- Assets.xcassets
-|       +-- Info.plist
+|       +-- Assets.xcassets
 |
 |-- Resources/
 |   |-- Info.plist
@@ -254,6 +326,10 @@ swift build
 ```xml
 <key>NSMicrophoneUsageDescription</key>
 <string>AudioType needs microphone access to transcribe your speech.</string>
+
+<key>NSSpeechRecognitionUsageDescription</key>
+<string>AudioType uses on-device speech recognition to transcribe your voice
+when no cloud API key is configured.</string>
 
 <key>LSUIElement</key>
 <true/>
@@ -291,11 +367,22 @@ User releases fn key
          |
          v
 +---------------------+
-| GroqEngine          |<------ Show "processing" indicator
-| encode WAV          |
-| POST to Groq API   |
-| parse response      |
+| EngineResolver      |<------ Show "processing" indicator
+| picks engine based  |
+| on user preference  |
 +---------------------+
+         |
+    +----+----+
+    |         |
+    v         v
++--------+ +-------------+
+| Groq   | | Apple       |
+| Engine | | Speech      |
+| (WAV → | | (PCMBuffer →|
+|  API)  | |  SFSpeech)  |
++--------+ +-------------+
+    |         |
+    +----+----+
          |
          v
 +---------------------+
@@ -320,13 +407,16 @@ User releases fn key
 
 | Error | Cause | Resolution |
 |-------|-------|------------|
-| API key not configured | User hasn't set key | Show onboarding / settings prompt |
-| Unauthorized (401) | Invalid API key | Prompt to check key in Settings |
-| Rate limited (429) | Too many requests | Auto-retry after delay, show message |
-| Network error | No internet | Show error, auto-reset to idle |
+| API key not configured | User hasn't set key (Groq mode) | Fall back to Apple Speech in Auto; show settings prompt in Groq mode |
+| Unauthorized (401) | Invalid Groq API key | Prompt to check key in Settings |
+| Rate limited (429) | Too many Groq requests | Auto-retry after delay, show message |
+| Network error | No internet (Groq) | Show error, auto-reset to idle |
+| Speech not authorized | User denied speech recognition | Request authorization on next attempt; show Settings link |
+| Speech not available | SFSpeechRecognizer unavailable | Show error, suggest configuring Groq key |
 | No microphone permission | User denied | Show onboarding with Settings link |
 | No accessibility permission | User didn't enable | Show alert with Settings button |
-| Transcription failed | Server error | Log error, show "Try again" |
+| No engine available | No Groq key AND speech denied | Show error prompting to configure either |
+| Transcription failed | Engine error | Log error, show "Try again", auto-reset |
 
 ---
 
@@ -337,10 +427,10 @@ User releases fn key
 | Swift 5.9+ | Primary language |
 | SwiftUI (macOS 13+) | UI framework |
 | AVFoundation | Audio capture |
-| Security | Keychain API key storage |
+| Speech | On-device speech recognition (Apple Speech engine) |
 | ApplicationServices | Keyboard simulation |
 
-**External service:** [Groq API](https://groq.com/) (user-provided API key)
+**External service:** [Groq API](https://groq.com/) (optional, user-provided API key)
 
 ---
 
@@ -349,10 +439,11 @@ User releases fn key
 AudioType provides a native Mac voice-to-text experience that:
 
 - Activates instantly via fn key hold
-- Uses Groq's cloud Whisper Large V3 for high-accuracy transcription
-- Self-serve: users bring their own free Groq API key
-- Securely stores API key in macOS Keychain
+- Supports two transcription backends: Groq Whisper (cloud) and Apple Speech (on-device)
+- Works out of the box without an API key using Apple's on-device speech recognition
+- Optionally uses Groq's cloud Whisper Large V3 for higher accuracy (free API key)
+- Automatically selects the best available engine (Auto mode)
+- Securely stores API key in file-based storage with restricted permissions
 - Simulates keyboard typing to insert text into any app
 - Runs as a lightweight menu bar app
-- Requires internet connection for transcription
 - Distributes as notarized DMG or build from source with `make app`
