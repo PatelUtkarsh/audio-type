@@ -4,7 +4,7 @@
 
 ## Project Overview
 
-AudioType is a **native macOS menu bar app** for voice-to-text. Users hold the `fn` key to record, release to transcribe via Groq's Whisper API, and the result is typed into the focused app. It runs as an `LSUIElement` (no dock icon), built with Swift Package Manager (not Xcode projects).
+AudioType is a **native macOS menu bar app** for voice-to-text. Users hold the `fn` key to record, release to transcribe, and the result is typed into the focused app. It supports two transcription backends: **Groq Whisper** (cloud) and **Apple Speech** (on-device). If no Groq API key is configured, the app falls back to Apple's on-device `SFSpeechRecognizer` automatically. It runs as an `LSUIElement` (no dock icon), built with Swift Package Manager (not Xcode projects).
 
 ## Build Commands
 
@@ -68,6 +68,62 @@ CI runs on every push/PR to `main` (`.github/workflows/ci.yml`):
 
 Releases (`.github/workflows/release.yml`) trigger on `v*` tags and produce `AudioType.dmg` + `AudioType.zip`.
 
+## Architecture
+
+### Transcription Engine System
+
+The app uses a **protocol-based engine abstraction** to support multiple speech-to-text backends:
+
+```
+TranscriptionEngine (protocol)
+├── GroqEngine          — Cloud-based, Groq Whisper API, requires API key
+└── AppleSpeechEngine   — On-device, Apple SFSpeechRecognizer, no API key needed
+```
+
+**`EngineResolver`** selects the active engine at runtime based on user preference (`TranscriptionEngineType`):
+
+| Mode | Behavior |
+|------|----------|
+| **Auto** (default) | Groq if API key exists, otherwise Apple Speech |
+| **Groq Whisper** | Always use Groq (fails if no key) |
+| **Apple Speech** | Always use on-device recognition |
+
+Both engines implement a single method: `transcribe(samples: [Float]) async throws -> String` — accepting 16 kHz mono Float32 PCM samples from `AudioRecorder`.
+
+### Data Flow
+
+```
+fn key held → HotKeyManager → TranscriptionManager.startRecording()
+                                    ↓
+                              AudioRecorder (AVAudioEngine, 16kHz mono PCM)
+                                    ↓
+fn key released → TranscriptionManager.stopRecordingAndTranscribe()
+                                    ↓
+                        EngineResolver.resolve() → TranscriptionEngine
+                           ↓                              ↓
+                      GroqEngine                  AppleSpeechEngine
+                   (HTTP multipart →              (SFSpeechAudioBuffer-
+                    Groq Whisper API)              RecognitionRequest)
+                           ↓                              ↓
+                              transcribed text
+                                    ↓
+                         TextPostProcessor (corrections)
+                                    ↓
+                         TextInserter (CGEvent keyboard simulation)
+                                    ↓
+                           text typed into focused app
+```
+
+### Permission Requirements
+
+| Permission | Required for | Plist key |
+|------------|-------------|-----------|
+| Microphone | Audio recording | `NSMicrophoneUsageDescription` |
+| Accessibility | Keyboard simulation (TextInserter) | Granted via System Settings |
+| Speech Recognition | Apple Speech engine (on-device) | `NSSpeechRecognitionUsageDescription` |
+
+Speech recognition permission is requested on-demand the first time the Apple Speech engine is used. The Groq engine does not require this permission.
+
 ## Project Structure
 
 ```
@@ -76,24 +132,26 @@ AudioType/
     AudioTypeApp.swift  # @main, AppDelegate, onboarding flow
     MenuBarController.swift  # NSStatusItem, state-driven icon tinting, overlay windows
     TranscriptionManager.swift  # State machine (idle→recording→processing→idle/error)
-  Core/                 # Business logic
-    AudioRecorder.swift     # AVAudioEngine capture, PCM→16kHz resampling, RMS level
-    GroqEngine.swift        # Groq Whisper API client, WAV encoding, multipart upload
-    HotKeyManager.swift     # CGEventTap for fn key hold detection
-    TextInserter.swift      # CGEvent keyboard simulation to type into focused app
-    TextPostProcessor.swift # Post-transcription corrections (tech terms, punctuation)
+  Core/                 # Business logic & transcription engines
+    AudioRecorder.swift       # AVAudioEngine capture, PCM→16kHz resampling, RMS level
+    TranscriptionEngine.swift # TranscriptionEngine protocol, TranscriptionEngineType, EngineResolver
+    GroqEngine.swift          # Groq Whisper API client, WAV encoding, multipart upload
+    AppleSpeechEngine.swift   # Apple SFSpeechRecognizer on-device transcription
+    HotKeyManager.swift       # CGEventTap for fn key hold detection
+    TextInserter.swift        # CGEvent keyboard simulation to type into focused app
+    TextPostProcessor.swift   # Post-transcription corrections (tech terms, punctuation)
   UI/                   # SwiftUI views
     RecordingOverlay.swift  # Floating waveform (recording) / thinking dots (processing)
-    OnboardingView.swift    # First-launch permission + API key setup
-    SettingsView.swift      # API key, model picker, permissions, launch-at-login
+    OnboardingView.swift    # First-launch permission setup (API key optional)
+    SettingsView.swift      # Engine picker, API key, model, language, permissions
     Theme.swift             # Brand color system (coral palette, adaptive dark/light)
   Utilities/
-    Permissions.swift       # Microphone + Accessibility permission helpers
+    Permissions.swift       # Microphone, Accessibility, Speech Recognition permission helpers
     KeychainHelper.swift    # File-based secret storage (Application Support, 0600 perms)
   Resources/
     Assets.xcassets/        # Asset catalog (currently empty)
 Resources/
-  Info.plist              # Bundle config (LSUIElement, mic usage description)
+  Info.plist              # Bundle config (LSUIElement, mic + speech recognition usage descriptions)
   AppIcon.icns            # App icon (coral gradient)
 ```
 
@@ -111,8 +169,9 @@ Resources/
 - Use `// MARK: -` sections to organize classes (`// MARK: - Private`, `// MARK: - Transcription`)
 
 ### Types & Naming
-- **Classes** for stateful objects with reference semantics: `TranscriptionManager`, `AudioRecorder`
-- **Enums** for namespaced constants and error types: `AudioTypeTheme`, `GroqEngineError`, `KeychainHelper`
+- **Protocols** for abstractions with multiple implementations: `TranscriptionEngine`
+- **Classes** for stateful objects with reference semantics: `TranscriptionManager`, `AudioRecorder`, `GroqEngine`, `AppleSpeechEngine`
+- **Enums** for namespaced constants and error types: `AudioTypeTheme`, `GroqEngineError`, `AppleSpeechError`, `TranscriptionEngineType`, `KeychainHelper`
 - **Structs** for SwiftUI views: `RecordingOverlay`, `SettingsView`
 - camelCase for properties/methods, PascalCase for types
 - Identifier names: min 1 char, max 50 chars; `x`, `y`, `i`, `j`, `k` are allowed
@@ -125,12 +184,21 @@ Resources/
 - Errors shown to user go through `TranscriptionState.error(String)`
 
 ### Patterns Used
+- **Protocol abstraction**: `TranscriptionEngine` with `GroqEngine` and `AppleSpeechEngine` implementations
+- **Resolver pattern**: `EngineResolver.resolve()` picks the engine at runtime based on config
 - **Singleton**: `TranscriptionManager.shared`, `TextPostProcessor.shared`, `AudioLevelMonitor.shared`
 - **`@MainActor`** on `TranscriptionManager` — all state mutations on main thread
 - **NotificationCenter** for decoupled state communication (`transcriptionStateChanged`, `audioLevelChanged`)
 - **`@Published` + ObservableObject** for SwiftUI reactivity
 - **Closures** for callbacks: `HotKeyManager(callback:)`, `audioRecorder.onLevelUpdate`
 - **`os.log` Logger** with subsystem `"com.audiotype"` — use per-class categories
+
+### Adding a New Transcription Engine
+1. Create a new class conforming to `TranscriptionEngine` in `AudioType/Core/`
+2. Implement `displayName`, `isAvailable`, and `transcribe(samples:)`
+3. Add a case to `TranscriptionEngineType` and update `EngineResolver.resolve()`
+4. Update `EngineResolver.anyEngineAvailable` if the engine has standalone availability
+5. Add any needed permissions to `Permissions.swift` and `Info.plist`
 
 ### Colors & Theming
 All colors live in `AudioType/UI/Theme.swift` (`AudioTypeTheme` enum). Never use hardcoded color literals in views. The palette:

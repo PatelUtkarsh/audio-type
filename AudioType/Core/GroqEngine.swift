@@ -145,12 +145,16 @@ enum GroqEngineError: Error, LocalizedError {
 
 // MARK: - Groq Engine
 
-class GroqEngine {
+class GroqEngine: TranscriptionEngine {
   private static let apiURL = URL(
     string: "https://api.groq.com/openai/v1/audio/transcriptions")!
   private static let keychainKey = "groqApiKey"
 
   private let logger = Logger(subsystem: "com.audiotype", category: "GroqEngine")
+
+  var displayName: String { "Groq Whisper" }
+
+  var isAvailable: Bool { Self.isConfigured }
 
   init() {}
 

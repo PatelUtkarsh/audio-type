@@ -1,6 +1,7 @@
 import AVFoundation
 import AppKit
 import Foundation
+import Speech
 
 class Permissions {
   /// Check and request microphone permission
@@ -34,18 +35,53 @@ class Permissions {
     return AXIsProcessTrustedWithOptions(options)
   }
 
+  // MARK: - Speech Recognition
+
+  /// Check and request speech recognition permission.
+  static func checkSpeechRecognition() async -> Bool {
+    let status = SFSpeechRecognizer.authorizationStatus()
+    switch status {
+    case .authorized:
+      return true
+    case .notDetermined:
+      return await AppleSpeechEngine.requestAuthorization()
+    case .denied, .restricted:
+      return false
+    @unknown default:
+      return false
+    }
+  }
+
+  /// Whether speech recognition has already been authorized.
+  static var isSpeechRecognitionAuthorized: Bool {
+    SFSpeechRecognizer.authorizationStatus() == .authorized
+  }
+
+  // MARK: - System Settings
+
   /// Open System Settings to Accessibility pane
   static func openAccessibilitySettings() {
-    if let url = URL(
-      string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+    let urlString =
+      "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+    if let url = URL(string: urlString) {
       NSWorkspace.shared.open(url)
     }
   }
 
   /// Open System Settings to Microphone pane
   static func openMicrophoneSettings() {
-    if let url = URL(
-      string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+    let urlString =
+      "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
+    if let url = URL(string: urlString) {
+      NSWorkspace.shared.open(url)
+    }
+  }
+
+  /// Open System Settings to Speech Recognition pane
+  static func openSpeechRecognitionSettings() {
+    let urlString =
+      "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition"
+    if let url = URL(string: urlString) {
       NSWorkspace.shared.open(url)
     }
   }

@@ -44,8 +44,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let micPermission = await Permissions.checkMicrophone()
     let accessibilityPermission = Permissions.checkAccessibility()
 
-    if !micPermission || !accessibilityPermission || !GroqEngine.isConfigured {
-      // Show onboarding window
+    // Show onboarding if permissions are missing or no engine is usable
+    if !micPermission || !accessibilityPermission || !EngineResolver.anyEngineAvailable {
       DispatchQueue.main.async {
         self.showOnboarding()
       }
