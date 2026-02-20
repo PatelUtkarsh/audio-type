@@ -1,9 +1,11 @@
 import AVFoundation
 import ServiceManagement
+import Speech
 import SwiftUI
 
 struct SettingsView: View {
   @AppStorage("launchAtLogin") private var launchAtLogin = false
+  @State private var selectedEngine = TranscriptionEngineType.current
   @State private var selectedModel = GroqModel.current
   @State private var selectedLanguage = TranscriptionLanguage.current
   @State private var apiKey: String = ""
@@ -12,13 +14,39 @@ struct SettingsView: View {
 
   var body: some View {
     Form {
+      // MARK: - Engine Selection
       Section {
-        LabeledContent("Hotkey") {
-          Text("Hold fn")
-            .foregroundColor(.secondary)
+        Picker("Engine", selection: $selectedEngine) {
+          ForEach(TranscriptionEngineType.allCases) { engine in
+            Text(engine.displayName)
+              .tag(engine)
+          }
+        }
+        .pickerStyle(.menu)
+        .onChange(of: selectedEngine) { newEngine in
+          TranscriptionEngineType.current = newEngine
+          Task { @MainActor in
+            TranscriptionManager.shared.onEngineConfigChanged()
+          }
         }
 
-        // Groq API Key
+        // Show which engine is actually active
+        let activeName = TranscriptionManager.shared.activeEngineName
+        if !activeName.isEmpty {
+          HStack(spacing: 4) {
+            Image(systemName: "cpu")
+              .font(.caption)
+            Text("Active: \(activeName)")
+              .font(.caption)
+              .foregroundColor(.secondary)
+          }
+        }
+      } header: {
+        Text("Transcription Engine")
+      }
+
+      // MARK: - Groq Settings
+      Section {
         HStack {
           SecureField("Groq API Key", text: $apiKey)
             .textFieldStyle(.roundedBorder)
@@ -65,7 +93,51 @@ struct SettingsView: View {
         .onChange(of: selectedModel) { newModel in
           GroqModel.current = newModel
         }
+      } header: {
+        Text("Groq (Cloud)")
+      }
 
+      // MARK: - Apple Speech Settings
+      Section {
+        HStack {
+          Text("Availability")
+          Spacer()
+          if AppleSpeechEngine.isSupported {
+            HStack(spacing: 4) {
+              Image(systemName: "checkmark.circle.fill")
+                .foregroundColor(AudioTypeTheme.coral)
+                .font(.caption)
+              Text("Supported")
+                .foregroundColor(.secondary)
+                .font(.caption)
+            }
+          } else {
+            Text("Not supported")
+              .foregroundColor(.secondary)
+              .font(.caption)
+          }
+        }
+
+        HStack {
+          Text("Permission")
+          Spacer()
+          PermissionStatusView(granted: Permissions.isSpeechRecognitionAuthorized)
+        }
+
+        if !Permissions.isSpeechRecognitionAuthorized {
+          Button("Grant Speech Recognition") {
+            Task {
+              _ = await Permissions.checkSpeechRecognition()
+            }
+          }
+          .font(.caption)
+        }
+      } header: {
+        Text("Apple Speech (On-Device)")
+      }
+
+      // MARK: - Language
+      Section {
         Picker("Language", selection: $selectedLanguage) {
           ForEach(TranscriptionLanguage.allCases) { lang in
             Text(lang.displayName)
@@ -77,10 +149,16 @@ struct SettingsView: View {
           TranscriptionLanguage.current = newLang
         }
       } header: {
-        Text("Transcription (Groq)")
+        Text("Language")
       }
 
+      // MARK: - General
       Section {
+        LabeledContent("Hotkey") {
+          Text("Hold fn")
+            .foregroundColor(.secondary)
+        }
+
         Toggle("Launch at Login", isOn: $launchAtLogin)
           .onChange(of: launchAtLogin) { newValue in
             setLaunchAtLogin(newValue)
@@ -89,6 +167,7 @@ struct SettingsView: View {
         Text("General")
       }
 
+      // MARK: - Permissions
       Section {
         HStack {
           Text("Microphone")
@@ -109,6 +188,7 @@ struct SettingsView: View {
         Text("Permissions")
       }
 
+      // MARK: - About
       Section {
         HStack {
           Text("Version")
@@ -117,13 +197,16 @@ struct SettingsView: View {
             .foregroundColor(.secondary)
         }
 
-        Link("View on GitHub", destination: URL(string: "https://github.com/PatelUtkarsh/audio-type")!)
+        Link(
+          "View on GitHub",
+          destination: URL(string: "https://github.com/PatelUtkarsh/audio-type")!
+        )
       } header: {
         Text("About")
       }
     }
     .formStyle(.grouped)
-    .frame(width: 400, height: 420)
+    .frame(width: 400, height: 580)
   }
 
   private func saveApiKey() {

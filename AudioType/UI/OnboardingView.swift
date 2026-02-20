@@ -1,9 +1,11 @@
 import AVFoundation
+import Speech
 import SwiftUI
 
 struct OnboardingView: View {
   @State private var microphoneGranted = false
   @State private var accessibilityGranted = false
+  @State private var speechRecognitionGranted = false
   @State private var apiKeyConfigured = GroqEngine.isConfigured
   @State private var apiKeyText = ""
   @State private var apiKeySaveError: String?
@@ -25,7 +27,7 @@ struct OnboardingView: View {
           .font(.title)
           .fontWeight(.semibold)
 
-        Text("Voice-to-text, powered by Groq")
+        Text("Voice-to-text for your Mac")
           .font(.subheadline)
           .foregroundColor(.secondary)
       }
@@ -51,7 +53,15 @@ struct OnboardingView: View {
           action: requestAccessibility
         )
 
-        // API Key Step
+        PermissionRow(
+          icon: "waveform.badge.mic",
+          title: "Speech Recognition",
+          description: "For on-device transcription",
+          isGranted: speechRecognitionGranted,
+          action: requestSpeechRecognition
+        )
+
+        // API Key Step (optional)
         VStack(alignment: .leading, spacing: 8) {
           HStack(spacing: 12) {
             Image(systemName: "key.fill")
@@ -60,9 +70,14 @@ struct OnboardingView: View {
               .frame(width: 32)
 
             VStack(alignment: .leading, spacing: 2) {
-              Text("Groq API Key")
-                .fontWeight(.medium)
-              Text("Free cloud transcription")
+              HStack(spacing: 4) {
+                Text("Groq API Key")
+                  .fontWeight(.medium)
+                Text("(optional)")
+                  .font(.caption)
+                  .foregroundColor(.secondary)
+              }
+              Text("Cloud transcription — faster & more accurate")
                 .font(.caption)
                 .foregroundColor(.secondary)
             }
@@ -89,12 +104,18 @@ struct OnboardingView: View {
             }
             .padding(.leading, 44)
 
-            Button("Get free API key") {
-              if let url = URL(string: "https://console.groq.com/keys") {
-                NSWorkspace.shared.open(url)
+            HStack(spacing: 12) {
+              Button("Get free API key") {
+                if let url = URL(string: "https://console.groq.com/keys") {
+                  NSWorkspace.shared.open(url)
+                }
               }
+              .font(.caption)
+
+              Text("or skip to use Apple Speech")
+                .font(.caption)
+                .foregroundColor(.secondary)
             }
-            .font(.caption)
             .padding(.leading, 44)
 
             if let error = apiKeySaveError {
@@ -111,6 +132,18 @@ struct OnboardingView: View {
 
       Spacer()
 
+      // Engine info badge
+      if canContinue {
+        let engineName = GroqEngine.isConfigured ? "Groq Whisper" : "Apple Speech"
+        HStack(spacing: 4) {
+          Image(systemName: GroqEngine.isConfigured ? "cloud.fill" : "cpu")
+            .font(.caption)
+          Text("Will use \(engineName) for transcription")
+            .font(.caption)
+        }
+        .foregroundColor(.secondary)
+      }
+
       // Continue Button
       Button(action: completeOnboarding) {
         Text(canContinue ? "Get Started" : "Complete Setup Above")
@@ -123,7 +156,7 @@ struct OnboardingView: View {
       .padding(.horizontal)
       .padding(.bottom)
     }
-    .frame(width: 450, height: 480)
+    .frame(width: 450, height: 560)
     .onAppear {
       checkPermissions()
     }
@@ -131,9 +164,10 @@ struct OnboardingView: View {
       // Continuously check permissions
       microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
       accessibilityGranted = Permissions.checkAccessibility()
+      speechRecognitionGranted = Permissions.isSpeechRecognitionAuthorized
       apiKeyConfigured = GroqEngine.isConfigured
 
-      // Auto-complete when all three are ready
+      // Auto-complete when all required permissions are ready and at least one engine works
       if canContinue && !hasAutoCompleted {
         hasAutoCompleted = true
         onComplete()
@@ -141,13 +175,16 @@ struct OnboardingView: View {
     }
   }
 
+  /// The user can proceed once mic + accessibility are granted AND at least one engine is usable.
   private var canContinue: Bool {
-    microphoneGranted && accessibilityGranted && apiKeyConfigured
+    microphoneGranted && accessibilityGranted
+      && (apiKeyConfigured || speechRecognitionGranted)
   }
 
   private func checkPermissions() {
     microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     accessibilityGranted = Permissions.checkAccessibility()
+    speechRecognitionGranted = Permissions.isSpeechRecognitionAuthorized
     apiKeyConfigured = GroqEngine.isConfigured
   }
 
@@ -159,6 +196,12 @@ struct OnboardingView: View {
 
   private func requestAccessibility() {
     Permissions.openAccessibilitySettings()
+  }
+
+  private func requestSpeechRecognition() {
+    Task {
+      speechRecognitionGranted = await Permissions.checkSpeechRecognition()
+    }
   }
 
   private func saveApiKey() {

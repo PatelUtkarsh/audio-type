@@ -11,7 +11,7 @@ enum TranscriptionState: Equatable {
     switch (lhs, rhs) {
     case (.idle, .idle), (.recording, .recording), (.processing, .processing):
       return true
-    case let (.error(a), .error(b)):
+    case (.error(let a), .error(let b)):
       return a == b
     default:
       return false
@@ -26,8 +26,8 @@ class TranscriptionManager: ObservableObject {
   @Published private(set) var state: TranscriptionState = .idle
   @Published private(set) var isInitialized = false
   @Published private(set) var audioLevel: Float = 0.0
+  @Published private(set) var activeEngineName: String = ""
 
-  private var groqEngine: GroqEngine?
   private var audioRecorder: AudioRecorder?
   private var hotKeyManager: HotKeyManager?
   private var textInserter: TextInserter?
@@ -53,14 +53,16 @@ class TranscriptionManager: ObservableObject {
     }
     textInserter = TextInserter()
 
-    // Initialize Groq engine (lightweight — no model download needed)
-    groqEngine = GroqEngine()
+    // Resolve which engine we will use and log it
+    let engine = EngineResolver.resolve()
+    activeEngineName = engine.displayName
+    logger.info("Active transcription engine: \(engine.displayName)")
 
-    if !GroqEngine.isConfigured {
-      logger.warning("Groq API key not configured")
-      setState(.error("API key required — open Settings"))
+    if !EngineResolver.anyEngineAvailable {
+      logger.warning("No transcription engine available")
+      setState(.error("No engine available — add a Groq key or enable Apple Speech"))
     } else {
-      logger.info("Groq engine ready")
+      logger.info("Transcription engine ready: \(engine.displayName)")
     }
 
     // Start hotkey listener
@@ -72,7 +74,7 @@ class TranscriptionManager: ObservableObject {
     hotKeyManager?.startListening()
 
     isInitialized = true
-    if GroqEngine.isConfigured {
+    if EngineResolver.anyEngineAvailable {
       setState(.idle)
     }
     logger.info("TranscriptionManager initialized successfully")
@@ -80,18 +82,24 @@ class TranscriptionManager: ObservableObject {
 
   func cleanup() {
     hotKeyManager?.stopListening()
-    groqEngine = nil
     audioRecorder = nil
   }
 
-  /// Called when the user saves an API key — re-validate and clear error state.
-  func onApiKeyChanged() {
-    if GroqEngine.isConfigured {
+  /// Called when the user saves an API key or changes engine preference — re-evaluate.
+  func onEngineConfigChanged() {
+    let engine = EngineResolver.resolve()
+    activeEngineName = engine.displayName
+    if EngineResolver.anyEngineAvailable {
       setState(.idle)
-      logger.info("API key configured, engine ready")
+      logger.info("Engine config changed, active engine: \(engine.displayName)")
     } else {
-      setState(.error("API key required — open Settings"))
+      setState(.error("No engine available — add a Groq key or enable Apple Speech"))
     }
+  }
+
+  /// Backwards-compatible alias used by SettingsView.
+  func onApiKeyChanged() {
+    onEngineConfigChanged()
   }
 
   private func handleHotKeyEvent(_ event: HotKeyEvent) {
@@ -109,8 +117,8 @@ class TranscriptionManager: ObservableObject {
       return
     }
 
-    guard GroqEngine.isConfigured else {
-      setState(.error("API key required — open Settings"))
+    guard EngineResolver.anyEngineAvailable else {
+      setState(.error("No engine available — add a Groq key or enable Apple Speech"))
       return
     }
 
@@ -146,19 +154,20 @@ class TranscriptionManager: ObservableObject {
   }
 
   private func transcribeAndInsert(samples: [Float]) async {
-    guard let groqEngine = groqEngine else {
-      await MainActor.run {
-        self.setState(.error("Groq engine not initialized"))
-      }
-      return
+    let engine = EngineResolver.resolve()
+
+    await MainActor.run {
+      self.activeEngineName = engine.displayName
     }
 
     let startTime = CFAbsoluteTimeGetCurrent()
 
     do {
-      let text = try await groqEngine.transcribe(samples: samples)
+      let text = try await engine.transcribe(samples: samples)
       let elapsed = CFAbsoluteTimeGetCurrent() - startTime
-      logger.info("Transcription completed in \(elapsed, format: .fixed(precision: 2))s: \(text)")
+      logger.info(
+        "[\(engine.displayName)] Transcription completed in \(elapsed, format: .fixed(precision: 2))s: \(text)"
+      )
 
       // Ensure processing indicator is visible for at least 0.5s
       let minDisplayTime = 0.5
@@ -177,7 +186,7 @@ class TranscriptionManager: ObservableObject {
         self.setState(.idle)
       }
     } catch {
-      logger.error("Transcription failed: \(error.localizedDescription)")
+      logger.error("[\(engine.displayName)] Transcription failed: \(error.localizedDescription)")
       await MainActor.run {
         self.setState(.error("Transcription failed"))
         // Auto-reset to idle after 2 seconds

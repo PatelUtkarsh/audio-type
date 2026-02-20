@@ -22,6 +22,8 @@
     <true/>
     <key>NSMicrophoneUsageDescription</key>
     <string>AudioType needs microphone access to transcribe your speech.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>AudioType uses on-device speech recognition to transcribe your voice when no cloud API key is configured.</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>CFBundleIconFile</key>
