@@ -5,27 +5,32 @@ A native macOS menu bar app for voice-to-text. Hold **fn** to record, release to
 ## Features
 
 - **Hold fn key** to record voice, release to transcribe and insert text
-- **Multiple cloud providers** — [Groq](https://groq.com/) and [OpenAI](https://openai.com/) Whisper APIs for high accuracy
-- **On-device fallback** — Apple Speech (no API key or internet needed)
+- **Local macOS transcription** — Apple Speech on-device recognition (no API key, no internet, fully private)
+- **Cloud providers for higher accuracy** — [Groq](https://groq.com/) and [OpenAI](https://openai.com/) Whisper APIs
 - **Works in any app** — types transcribed text into the focused application
 - **Self-serve** — bring your own API key (Groq free tier, or OpenAI)
 - **Lightweight** — runs in menu bar, no dock icon
 
 ## Privacy & Data
 
-> **Important:** AudioType previously ran transcription 100% locally using whisper.cpp. We found the local model quality insufficient for reliable daily use, so we switched to cloud-based Whisper APIs which provide significantly better accuracy and speed. An on-device Apple Speech fallback is available if you prefer no cloud usage.
+AudioType offers two transcription modes with different privacy trade-offs:
 
-**What this means:**
+### Local macOS Speech API (private by default)
 
-- When using a cloud engine, audio recordings **are sent to the provider's servers** for transcription
-- An internet connection **is required** for cloud transcription (not needed for Apple Speech)
+- Uses Apple's built-in `SFSpeechRecognizer` — runs **entirely on-device** when on-device recognition is available (macOS 13+)
+- **No audio leaves your machine**, no API key needed, no internet required
+- Works out of the box with zero configuration
+- Accuracy is good for everyday dictation, though cloud providers may perform better for specialized vocabulary
+
+### Cloud providers (higher accuracy)
+
+- When using Groq or OpenAI, audio recordings **are sent to the provider's servers** for transcription
+- An internet connection **is required** for cloud transcription
 - Your API keys are stored locally in the macOS Keychain
 - No audio is saved to disk locally — it is recorded in memory, sent to the cloud provider, and discarded
 - See [Groq's data policy](https://groq.com/privacy-policy/) or [OpenAI's data policy](https://openai.com/policies/privacy-policy) for how they handle your data
 
-### Looking for the privacy-focused local version?
-
-If you prefer **100% offline transcription** with no data leaving your machine, you can use [AudioType v1.1.1](https://github.com/PatelUtkarsh/audio-type/releases/tag/v1.1.1) — the last release that runs transcription entirely on-device using a local OpenAI Whisper model via [whisper.cpp](https://github.com/ggerganov/whisper.cpp). No internet or API key required. Note that local transcription accuracy is lower than the cloud version.
+> **Note:** AudioType previously bundled a local Whisper model via [whisper.cpp](https://github.com/ggerganov/whisper.cpp). We replaced it with Apple's native Speech API, which provides better system integration and comparable on-device accuracy without bundling a large model. If you still want the whisper.cpp version, see [AudioType v1.1.1](https://github.com/PatelUtkarsh/audio-type/releases/tag/v1.1.1).
 
 ## Requirements
 
@@ -116,7 +121,7 @@ You can skip the API key step to use Apple Speech. Additional cloud providers (O
 ### Settings
 
 - **Engine Selection**:
-  - `Auto` (default) — uses Groq if configured, then OpenAI, then Apple Speech
+  - `Auto` (default) — uses Groq if configured, then OpenAI, then Apple Speech (local)
   - `Groq Whisper` — always use Groq (requires API key)
   - `OpenAI Whisper` — always use OpenAI (requires API key)
   - `Apple Speech` — always use on-device recognition
