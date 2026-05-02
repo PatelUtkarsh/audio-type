@@ -12,6 +12,7 @@ struct AudioTypeApp: App {
   }
 }
 
+@MainActor
 class AppDelegate: NSObject, NSApplicationDelegate {
   private var statusItem: NSStatusItem!
   private var menuBarController: MenuBarController!
@@ -49,8 +50,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // Show onboarding if permissions are missing or no engine is usable
     if !micPermission || !accessibilityPermission || !EngineResolver.anyEngineAvailable {
-      DispatchQueue.main.async {
-        self.showOnboarding()
+      await MainActor.run {
+        showOnboarding()
       }
     } else {
       // All set — start listening for hotkey
