@@ -116,6 +116,12 @@ class TranscriptionManager: ObservableObject {
     }
   }
 
+  /// Engine resolved at recording start and reused for the matching
+  /// transcription. Keeps Keychain / availability checks out of the
+  /// post-stop hot path and ensures the engine identity doesn't change
+  /// mid-recording if the user edits settings.
+  private var activeEngine: TranscriptionEngine?
+
   private func startRecording() {
     guard state == .idle else {
       logger.warning("Cannot start recording: not in idle state")
@@ -132,10 +138,15 @@ class TranscriptionManager: ObservableObject {
     transcriptionTask?.cancel()
     transcriptionTask = nil
 
+    // Resolve the engine once, up front. transcribeAndInsert will reuse it.
+    let engine = EngineResolver.resolve()
+    activeEngine = engine
+    activeEngineName = engine.displayName
+
     do {
       try audioRecorder?.startRecording()
       setState(.recording)
-      logger.info("Recording started")
+      logger.info("Recording started with engine: \(engine.displayName)")
     } catch {
       logger.error("Failed to start recording: \(error.localizedDescription)")
       setState(.error("Failed to start recording"))
@@ -154,22 +165,22 @@ class TranscriptionManager: ObservableObject {
       return
     }
 
+    // Take the engine resolved at startRecording. Falls back to a fresh
+    // resolution defensively if somehow nil.
+    let engine = activeEngine ?? EngineResolver.resolve()
+    activeEngine = nil
+
     logger.info("Recording stopped, captured \(samples.count) samples")
     setState(.processing)
 
     // Transcribe in background. Hold the task so the next recording can
     // cancel it if it's still pending.
     transcriptionTask = Task.detached { [weak self] in
-      await self?.transcribeAndInsert(samples: samples)
+      await self?.transcribeAndInsert(samples: samples, engine: engine)
     }
   }
 
-  private func transcribeAndInsert(samples: [Float]) async {
-    let engine = EngineResolver.resolve()
-
-    await MainActor.run {
-      self.activeEngineName = engine.displayName
-    }
+  private func transcribeAndInsert(samples: [Float], engine: TranscriptionEngine) async {
 
     let startTime = CFAbsoluteTimeGetCurrent()
 
