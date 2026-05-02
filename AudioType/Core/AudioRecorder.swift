@@ -1,8 +1,12 @@
 import AVFoundation
+import Accelerate
 import os.log
 
 class AudioRecorder {
-  private let audioEngine = AVAudioEngine()
+  // Lazily created on startRecording and torn down on stopRecording so the
+  // audio HAL doesn't stay warm between recordings (big idle-energy win for
+  // a menu-bar app).
+  private var audioEngine: AVAudioEngine?
   private var audioBuffer: [Float] = []
   private let bufferLock = NSLock()
   private var isRecording = false
@@ -16,8 +20,8 @@ class AudioRecorder {
   private let targetSampleRate: Double = 16000
 
   init() {
-    // Pre-allocate buffer for ~30 seconds of audio at 16kHz
-    audioBuffer.reserveCapacity(Int(targetSampleRate * 30))
+    // Buffer is allocated on each startRecording so the recorder has zero
+    // footprint when idle.
   }
 
   func startRecording() throws {
@@ -26,12 +30,19 @@ class AudioRecorder {
       return
     }
 
-    // Clear previous buffer
-    bufferLock.lock()
-    audioBuffer.removeAll(keepingCapacity: true)
-    bufferLock.unlock()
+    // Drop the buffer entirely (don't preserve capacity — see issue 1.4).
+    do {
+      bufferLock.lock()
+      defer { bufferLock.unlock() }
+      audioBuffer = []
+      audioBuffer.reserveCapacity(Int(targetSampleRate * 30))
+    }
 
-    let inputNode = audioEngine.inputNode
+    // Lazily create the audio engine on each recording.
+    let engine = AVAudioEngine()
+    audioEngine = engine
+
+    let inputNode = engine.inputNode
     let inputFormat = inputNode.outputFormat(forBus: 0)
 
     logger.info("Input format: \(inputFormat.sampleRate)Hz, \(inputFormat.channelCount) channels")
@@ -66,8 +77,8 @@ class AudioRecorder {
     }
 
     // Start audio engine
-    audioEngine.prepare()
-    try audioEngine.start()
+    engine.prepare()
+    try engine.start()
 
     isRecording = true
     logger.info("Recording started")
@@ -79,16 +90,25 @@ class AudioRecorder {
       return nil
     }
 
-    // Stop and remove tap
-    audioEngine.inputNode.removeTap(onBus: 0)
-    audioEngine.stop()
+    // Stop and tear down the engine so the audio HAL releases its resources.
+    if let engine = audioEngine {
+      engine.inputNode.removeTap(onBus: 0)
+      engine.stop()
+    }
+    audioEngine = nil
 
     isRecording = false
 
-    // Return captured samples
-    bufferLock.lock()
-    let samples = audioBuffer
-    bufferLock.unlock()
+    // Move the buffer out of the recorder (zero-copy via COW transfer) and
+    // leave the recorder with a fresh empty array so it doesn't keep the
+    // recording's high-water capacity in memory.
+    let samples: [Float]
+    do {
+      bufferLock.lock()
+      defer { bufferLock.unlock() }
+      samples = audioBuffer
+      audioBuffer = []
+    }
 
     logger.info(
       "Recording stopped, captured \(samples.count) samples (\(Double(samples.count) / self.targetSampleRate, format: .fixed(precision: 2))s)"
@@ -100,10 +120,7 @@ class AudioRecorder {
   private func processAudioBuffer(
     _ buffer: AVAudioPCMBuffer, converter: AVAudioConverter?, targetFormat: AVAudioFormat
   ) {
-    var samplesArray: [Float]
-
     if let converter = converter {
-      // Need to convert to target format
       let frameCount = AVAudioFrameCount(
         Double(buffer.frameLength) * targetSampleRate / buffer.format.sampleRate
       )
@@ -129,25 +146,37 @@ class AudioRecorder {
       }
 
       guard let channelData = convertedBuffer.floatChannelData else { return }
-      samplesArray = Array(
-        UnsafeBufferPointer(start: channelData[0], count: Int(convertedBuffer.frameLength)))
+      let count = Int(convertedBuffer.frameLength)
+      consume(samples: channelData[0], count: count)
     } else {
-      // Already in correct format
       guard let channelData = buffer.floatChannelData else { return }
-      samplesArray = Array(
-        UnsafeBufferPointer(start: channelData[0], count: Int(buffer.frameLength)))
+      let count = Int(buffer.frameLength)
+      consume(samples: channelData[0], count: count)
     }
+  }
 
-    // Compute RMS level for live waveform
-    let rms = sqrt(samplesArray.reduce(0) { $0 + $1 * $1 } / Float(max(samplesArray.count, 1)))
+  /// Consume a chunk of mic samples: compute RMS for the waveform and append
+  /// to the recording buffer — without ever materialising an intermediate
+  /// `[Float]`. Called on the audio thread.
+  private func consume(samples: UnsafePointer<Float>, count: Int) {
+    guard count > 0 else { return }
+
+    // RMS via Accelerate (vectorised). Replaces a scalar reduce loop that
+    // ran on every tap callback.
+    var meanSquare: Float = 0
+    vDSP_measqv(samples, 1, &meanSquare, vDSP_Length(count))
+    let rms = sqrt(meanSquare)
     // Normalize: typical speech RMS is 0.01–0.15, scale aggressively to 0–1
     let level = min(rms * 25, 1.0)
     onLevelUpdate?(level)
 
-    // Append to buffer
+    // Append directly from the unsafe buffer pointer; [Float] has an
+    // append(contentsOf:) overload that takes any Sequence, including
+    // UnsafeBufferPointer, so no intermediate Array is allocated.
+    let ptr = UnsafeBufferPointer(start: samples, count: count)
     bufferLock.lock()
-    audioBuffer.append(contentsOf: samplesArray)
-    bufferLock.unlock()
+    defer { bufferLock.unlock() }
+    audioBuffer.append(contentsOf: ptr)
   }
 }
 

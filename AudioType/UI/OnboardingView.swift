@@ -9,7 +9,6 @@ struct OnboardingView: View {
   @State private var anyCloudKeyConfigured = GroqEngine.isConfigured || OpenAIEngine.isConfigured
   @State private var apiKeyText = ""
   @State private var apiKeySaveError: String?
-  @State private var hasAutoCompleted = false
 
   let timer = Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
 
@@ -77,7 +76,7 @@ struct OnboardingView: View {
                   .font(.caption)
                   .foregroundColor(.secondary)
               }
-              Text("Cloud transcription — faster & more accurate")
+              Text("Cloud transcription - faster & more accurate")
                 .font(.caption)
                 .foregroundColor(.secondary)
             }
@@ -165,17 +164,13 @@ struct OnboardingView: View {
       checkPermissions()
     }
     .onReceive(timer) { _ in
-      // Continuously check permissions
+      // Continuously refresh permission state so the UI reflects changes made
+      // in System Settings. The user closes the window themselves via the
+      // "Get Started" button once everything is ready.
       microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
       accessibilityGranted = Permissions.checkAccessibility()
       speechRecognitionGranted = Permissions.isSpeechRecognitionAuthorized
       anyCloudKeyConfigured = GroqEngine.isConfigured || OpenAIEngine.isConfigured
-
-      // Auto-complete when all required permissions are ready and at least one engine works
-      if canContinue && !hasAutoCompleted {
-        hasAutoCompleted = true
-        onComplete()
-      }
     }
   }
 

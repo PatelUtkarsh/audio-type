@@ -1,11 +1,10 @@
 import SwiftUI
 
 struct RecordingOverlay: View {
-  let text: String
   @EnvironmentObject var levelMonitor: AudioLevelMonitor
 
   private var isRecording: Bool {
-    text == "Recording..."
+    levelMonitor.overlayText == "Recording..."
   }
 
   var body: some View {

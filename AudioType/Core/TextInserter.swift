@@ -6,24 +6,41 @@ import os.log
 class TextInserter {
   private let logger = Logger(subsystem: "com.audiotype", category: "TextInserter")
 
+  /// Above this length we paste via clipboard instead of synthesising one
+  /// keystroke per character. Per-char synthesis costs ~1 ms each plus a
+  /// fresh CGEventSource per char — for long dictations that's the dominant
+  /// post-recording latency the user feels.
+  private static let clipboardPasteThreshold = 30
+
   func insertText(_ text: String) {
     guard !text.isEmpty else { return }
 
     logger.info("Inserting text: \(text.prefix(50))...")
 
-    // Use CGEvent to simulate keyboard input
-    for char in text {
-      insertCharacter(char)
-      // Small delay between characters for reliability
-      usleep(1000)  // 1ms
+    if text.count > Self.clipboardPasteThreshold {
+      insertTextViaClipboard(text)
+    } else {
+      insertTextViaKeystrokes(text)
     }
 
     logger.info("Text insertion complete")
   }
 
-  private func insertCharacter(_ char: Character) {
+  /// Per-character keystroke synthesis. Used for short strings where
+  /// clipboard paste's clipboard-restore quirks aren't worth it.
+  private func insertTextViaKeystrokes(_ text: String) {
+    // Cache the event source once for the whole insertion — creating one
+    // per character was a measurable hot path.
     let source = CGEventSource(stateID: .hidSystemState)
 
+    for char in text {
+      insertCharacter(char, source: source)
+      // Tiny delay so target apps don't drop events under load.
+      usleep(1000)  // 1ms
+    }
+  }
+
+  private func insertCharacter(_ char: Character, source: CGEventSource?) {
     // Create key down event
     guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true) else {
       logger.error("Failed to create keyDown event")

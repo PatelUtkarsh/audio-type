@@ -12,6 +12,13 @@ enum KeychainHelper {
     subsystem: "com.audiotype", category: "KeychainHelper"
   )
 
+  // In-memory cache of resolved values. Keychain reads aren't expensive in
+  // absolute terms but they were happening on every transcription (often
+  // multiple times) via the engines' apiKey getters. Cache entries are
+  // invalidated on save/delete.
+  private static var cache: [String: String?] = [:]
+  private static let cacheLock = NSLock()
+
   // MARK: - Public API
 
   /// Save a value to the Keychain. Overwrites any existing value for the key.
@@ -36,11 +43,23 @@ enum KeychainHelper {
       logger.error("Failed to save key \(key), status: \(status)")
       throw KeychainError.saveFailed(status)
     }
+
+    cacheLock.lock()
+    cache[key] = value
+    cacheLock.unlock()
+
     logger.info("Saved value for key: \(key)")
   }
 
   /// Retrieve a value from the Keychain.
   static func get(key: String) -> String? {
+    cacheLock.lock()
+    if let cached = cache[key] {
+      cacheLock.unlock()
+      return cached
+    }
+    cacheLock.unlock()
+
     let query: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: service,
@@ -52,12 +71,18 @@ enum KeychainHelper {
     var result: AnyObject?
     let status = SecItemCopyMatching(query as CFDictionary, &result)
 
-    guard status == errSecSuccess,
+    let value: String?
+    if status == errSecSuccess,
       let data = result as? Data,
-      let value = String(data: data, encoding: .utf8)
-    else {
-      return nil
+      let decoded = String(data: data, encoding: .utf8) {
+      value = decoded
+    } else {
+      value = nil
     }
+
+    cacheLock.lock()
+    cache[key] = value
+    cacheLock.unlock()
 
     return value
   }
@@ -72,6 +97,11 @@ enum KeychainHelper {
     ]
 
     let status = SecItemDelete(query as CFDictionary)
+
+    cacheLock.lock()
+    cache[key] = .some(nil)  // remember "absent" too, to avoid re-querying
+    cacheLock.unlock()
+
     if status == errSecSuccess || status == errSecItemNotFound {
       return true
     }
