@@ -54,6 +54,10 @@ class MenuBarController: NSObject, NSWindowDelegate {
     )
   }
 
+  deinit {
+    NotificationCenter.default.removeObserver(self)
+  }
+
   func setupStatusItem(_ statusItem: NSStatusItem) {
     self.statusItem = statusItem
 
