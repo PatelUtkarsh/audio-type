@@ -88,7 +88,7 @@ class WhisperAPIEngine: TranscriptionEngine {
       throw WhisperAPIError.invalidURL
     }
 
-    let request = WAVEncoder.buildRequest(
+    let (request, body) = WAVEncoder.buildRequest(
       url: url,
       apiKey: apiKey,
       wavData: wavData,
@@ -98,7 +98,10 @@ class WhisperAPIEngine: TranscriptionEngine {
 
     let (data, response): (Data, URLResponse)
     do {
-      (data, response) = try await URLSession.shared.data(for: request)
+      // upload(for:from:) keeps a single copy of the body; setting
+      // request.httpBody and calling data(for:) tends to keep the body
+      // resident in two places. With ~2 MB WAV bodies this matters.
+      (data, response) = try await URLSession.shared.upload(for: request, from: body)
     } catch {
       throw WhisperAPIError.networkError(error.localizedDescription)
     }
@@ -267,6 +270,9 @@ enum WAVEncoder {
 
   /// Build a multipart/form-data request for an OpenAI-compatible
   /// `/v1/audio/transcriptions` endpoint.
+  ///
+  /// Returns the request and body separately so callers can pass the body
+  /// to `URLSession.upload(for:from:)` instead of setting `httpBody`.
   static func buildRequest(
     url: URL,
     apiKey: String,
@@ -274,7 +280,7 @@ enum WAVEncoder {
     model: String,
     languageCode: String?,
     timeoutInterval: TimeInterval = 30
-  ) -> URLRequest {
+  ) -> (URLRequest, Data) {
     let boundary = UUID().uuidString
 
     var request = URLRequest(url: url)
@@ -311,8 +317,7 @@ enum WAVEncoder {
     )
     body.append(Data("--\(boundary)--\r\n".utf8))
 
-    request.httpBody = body
-    return request
+    return (request, body)
   }
 }
 
