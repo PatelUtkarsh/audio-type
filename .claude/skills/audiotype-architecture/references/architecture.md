@@ -4,7 +4,7 @@ A native macOS application providing instant voice-to-text functionality.
 
 ## Overview
 
-**AudioType** captures voice via a global hotkey, transcribes it using **Groq Whisper** (cloud), **OpenAI Whisper** (cloud), or **Apple Speech** (on-device), and simulates keyboard typing to insert text into any application. If no cloud API key is configured, the app falls back to Apple's on-device `SFSpeechRecognizer` automatically.
+**AudioType** captures voice via a global hotkey, transcribes it using **Groq Whisper** (cloud), **OpenAI Whisper** (cloud), or **Apple Speech** (on-device), and inserts text into the focused application via keyboard simulation (short text) or clipboard paste (long text). If no cloud API key is configured, the app falls back to Apple's on-device `SFSpeechRecognizer` automatically.
 
 ### Key Design Goals
 
@@ -59,6 +59,19 @@ A native macOS application providing instant voice-to-text functionality.
 
 ## Component Breakdown
 
+### 0. Transcription Manager (orchestrator)
+
+`TranscriptionManager` (`@MainActor`, singleton) wires the pipeline together. It owns the `AudioRecorder`, `HotKeyManager`, `TextInserter`, and the `@Published` `state: TranscriptionState` (`idle | recording | processing | error`) consumed by the menu-bar UI and recording overlay.
+
+Important behaviours:
+
+- **Engine pinning:** `EngineResolver.resolve()` is called once at `startRecording`; the same engine instance is reused for the matching `transcribe` call. This keeps Keychain/availability checks off the post-stop hot path and prevents the engine identity from changing mid-recording if the user edits settings.
+- **Cancellation on re-trigger:** the in-flight `transcriptionTask` is cancelled when a new recording starts, so stale text from a previous (slow) transcription never lands in the user's new context.
+- **Minimum 0.5 s processing indicator:** if transcription returns faster, the manager sleeps the remainder so the UI flash isn't jarring.
+- **Trailing space:** post-processed text is inserted with a trailing space.
+- **Auto-reset on error:** errors auto-clear back to `.idle` after 2 s.
+- **Engine-config notifications:** `onEngineConfigChanged()` (alias `onApiKeyChanged()`) is called by Settings/Onboarding to re-resolve the active engine and clear/raise the "no engine available" error.
+
 ### 1. HotKey Manager
 
 **Purpose:** Listen for global keyboard shortcuts to trigger recording.
@@ -69,9 +82,13 @@ A native macOS application providing instant voice-to-text functionality.
 
 **Default Hotkey:** Hold `fn` key
 
+The tap fires on `flagsChanged`. Recording only starts when `fn` is held alone — if Command, Shift, Option, or Control are also pressed, the event is ignored so the user can still use system fn-modified shortcuts.
+
 **States:**
 - Idle -> Recording (on key down)
 - Recording -> Processing (on key up)
+
+**Self-healing:** If the system disables the event tap (`tapDisabledByTimeout` / `tapDisabledByUserInput`), the manager re-enables it inline.
 
 ---
 
@@ -80,17 +97,18 @@ A native macOS application providing instant voice-to-text functionality.
 **Purpose:** Capture microphone audio in real-time.
 
 **Technology:**
-- `AVAudioEngine` for low-latency capture
-- Output format: 16kHz mono PCM Float32 (optimal for Whisper and SFSpeechRecognizer)
+- `AVAudioEngine` for low-latency capture, lazily created on `startRecording` and torn down on `stopRecording` so the audio HAL is fully released between recordings (idle-energy win for a menu-bar app)
+- Output format: 16 kHz mono PCM Float32 (optimal for Whisper and SFSpeechRecognizer)
+- `AVAudioConverter` resamples the input device's native format to 16 kHz mono when needed
+- RMS levels computed via Accelerate (`vDSP_measqv`) on each tap callback and surfaced through `onLevelUpdate` for the recording overlay waveform
 
 **Key Components:**
 ```swift
 class AudioRecorder {
-    let audioEngine = AVAudioEngine()
-    var audioBuffer: [Float] = []
+    var onLevelUpdate: ((Float) -> Void)?
 
-    func startRecording()               // Begin capture
-    func stopRecording() -> [Float]     // Return samples
+    func startRecording() throws        // Begin capture
+    func stopRecording() -> [Float]?    // Return samples or nil if empty
 }
 ```
 
@@ -163,10 +181,10 @@ Subclasses only need to override `config` (with `WhisperAPIConfig`) and `current
 
 | Model | Speed | Accuracy | Cost |
 |-------|-------|----------|------|
+| `whisper-large-v3` | Fast (189x real-time) | Best (default) | $0.111/hr |
 | `whisper-large-v3-turbo` | Faster (216x real-time) | Good | $0.04/hr |
-| `whisper-large-v3` | Fast (189x real-time) | Best | $0.111/hr |
 
-**Default Model:** `whisper-large-v3-turbo`
+**Default Model:** `whisper-large-v3` (see `GroqModel.current` in `GroqEngine.swift`)
 
 ##### Free Tier Rate Limits
 
@@ -225,7 +243,9 @@ class AppleSpeechEngine: TranscriptionEngine {
 
 ##### API Key Management
 
-- Stored in macOS Keychain via `KeychainHelper` (Security framework)
+- Stored in macOS Keychain via `KeychainHelper` (Security framework, `kSecClassGenericPassword`, service `com.audiotype.app`, `kSecAttrAccessibleAfterFirstUnlock`)
+- In-memory cache in `KeychainHelper` avoids per-transcription Keychain reads; invalidated on save/delete
+- One-time migration from a legacy file-based `.secrets` store (`migrateFromFileStoreIfNeeded`, run from `applicationDidFinishLaunching`)
 - Never written to UserDefaults or logged
 - User provides their own key (self-serve, optional)
 
@@ -238,7 +258,9 @@ class AppleSpeechEngine: TranscriptionEngine {
 - Fixes common misheard tech terms (e.g. "git hub" -> "GitHub")
 - Capitalizes first letter of sentences
 - Supports voice commands ("new line", "period", etc.)
-- User-defined custom word replacements (persisted in UserDefaults)
+- User-defined custom word replacements (persisted in UserDefaults under `customWordReplacements`)
+
+**Implementation:** Singleton (`TextPostProcessor.shared`). Built-in and custom replacement catalogs are merged and compiled into a single `NSRegularExpression` (longest-key-first to ensure "rest api" beats "api"), with a lookup table for replacement strings. The cached regex is rebuilt only when custom replacements change. A single regex pass replaces previous ~85 case-insensitive scans per transcription.
 
 ---
 
@@ -247,8 +269,10 @@ class AppleSpeechEngine: TranscriptionEngine {
 **Purpose:** Type transcribed text into the currently focused application.
 
 **Technology:**
-- `CGEventPost` to simulate keyboard events
-- Post to `.cgSessionEventTap` for system-wide injection
+- Two strategies, chosen by length (threshold: 30 characters):
+  - **Short text (≤30 chars):** synthesise per-character `CGEvent` keystrokes with `keyboardSetUnicodeString`, posted to `.cgSessionEventTap` with a 1 ms inter-key delay so target apps don't drop events. The `CGEventSource` is built once per insertion (cached) — creating one per character was a measurable hot path.
+  - **Long text (>30 chars):** save the current pasteboard contents, write the text to `NSPasteboard.general`, synthesise Cmd+V via `CGEvent`, then restore the previous clipboard ~100 ms later. Per-char synthesis was the dominant post-recording latency for long dictations.
+- All events posted to `.cgSessionEventTap` for system-wide injection.
 
 **Permissions Required:**
 - Accessibility access (`AXIsProcessTrusted()`)
@@ -276,8 +300,10 @@ class AppleSpeechEngine: TranscriptionEngine {
 - Permission status display
 
 #### Onboarding Window
-- First-launch flow: Microphone -> Accessibility -> Speech Recognition -> API Key (optional)
+- First-launch flow: Microphone -> Accessibility -> Speech Recognition (optional) -> API Key (optional)
+- Shown by `AppDelegate.checkPermissions` whenever microphone OR accessibility is missing OR `EngineResolver.anyEngineAvailable` is false
 - API key step can be skipped to use Apple Speech
+- Speech Recognition can also be authorized lazily on first Apple Speech transcription (`SFSpeechRecognizer.requestAuthorization` if status is `.notDetermined`)
 - Shows which engine will be active based on configuration
 - Link to get free Groq API key
 
@@ -471,6 +497,6 @@ AudioType provides a native Mac voice-to-text experience that:
 - Optionally uses Groq's cloud Whisper Large V3 or OpenAI's GPT-4o for higher accuracy
 - Automatically selects the best available engine (Auto mode: Groq → OpenAI → Apple Speech)
 - Securely stores API keys in macOS Keychain
-- Simulates keyboard typing to insert text into any app
+- Inserts text into any app via per-character keystroke synthesis (short text) or clipboard paste (long text)
 - Runs as a lightweight menu bar app
 - Distributes as notarized DMG or build from source with `make app`
