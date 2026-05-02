@@ -74,8 +74,7 @@ enum KeychainHelper {
     let value: String?
     if status == errSecSuccess,
       let data = result as? Data,
-      let decoded = String(data: data, encoding: .utf8)
-    {
+      let decoded = String(data: data, encoding: .utf8) {
       value = decoded
     } else {
       value = nil

@@ -202,7 +202,7 @@ enum WAVEncoder {
     let totalSize = 44 + samples.count * 2
 
     var data = Data(count: totalSize)
-    data.withUnsafeMutableBytes { (raw: UnsafeMutableRawBufferPointer) -> Void in
+    data.withUnsafeMutableBytes { (raw: UnsafeMutableRawBufferPointer) in
       guard let base = raw.baseAddress else { return }
 
       // --- Header ---------------------------------------------------------
