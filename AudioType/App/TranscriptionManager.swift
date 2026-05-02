@@ -32,6 +32,11 @@ class TranscriptionManager: ObservableObject {
   private var hotKeyManager: HotKeyManager?
   private var textInserter: TextInserter?
 
+  /// Active transcription task. Held so a new recording can cancel any
+  /// in-flight transcription from a previous one (e.g. user re-triggers
+  /// the hotkey while the network call is still pending).
+  private var transcriptionTask: Task<Void, Never>?
+
   private let logger = Logger(subsystem: "com.audiotype", category: "TranscriptionManager")
 
   private init() {}
@@ -60,7 +65,7 @@ class TranscriptionManager: ObservableObject {
 
     if !EngineResolver.anyEngineAvailable {
       logger.warning("No transcription engine available")
-      setState(.error("No engine available — add a cloud API key or enable Apple Speech"))
+      setState(.error("No engine available - add a cloud API key or enable Apple Speech"))
     } else {
       logger.info("Transcription engine ready: \(engine.displayName)")
     }
@@ -85,7 +90,7 @@ class TranscriptionManager: ObservableObject {
     audioRecorder = nil
   }
 
-  /// Called when the user saves an API key or changes engine preference — re-evaluate.
+  /// Called when the user saves an API key or changes engine preference - re-evaluate.
   func onEngineConfigChanged() {
     let engine = EngineResolver.resolve()
     activeEngineName = engine.displayName
@@ -93,7 +98,7 @@ class TranscriptionManager: ObservableObject {
       setState(.idle)
       logger.info("Engine config changed, active engine: \(engine.displayName)")
     } else {
-      setState(.error("No engine available — add a cloud API key or enable Apple Speech"))
+      setState(.error("No engine available - add a cloud API key or enable Apple Speech"))
     }
   }
 
@@ -118,9 +123,14 @@ class TranscriptionManager: ObservableObject {
     }
 
     guard EngineResolver.anyEngineAvailable else {
-      setState(.error("No engine available — add a cloud API key or enable Apple Speech"))
+      setState(.error("No engine available - add a cloud API key or enable Apple Speech"))
       return
     }
+
+    // Cancel any still-pending transcription from a previous recording so
+    // we don't insert stale text into the user's new context.
+    transcriptionTask?.cancel()
+    transcriptionTask = nil
 
     do {
       try audioRecorder?.startRecording()
@@ -147,8 +157,9 @@ class TranscriptionManager: ObservableObject {
     logger.info("Recording stopped, captured \(samples.count) samples")
     setState(.processing)
 
-    // Transcribe in background
-    Task.detached { [weak self] in
+    // Transcribe in background. Hold the task so the next recording can
+    // cancel it if it's still pending.
+    transcriptionTask = Task.detached { [weak self] in
       await self?.transcribeAndInsert(samples: samples)
     }
   }
