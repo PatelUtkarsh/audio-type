@@ -36,7 +36,10 @@ class HotKeyManager {
         options: .defaultTap,
         eventsOfInterest: eventMask,
         callback: { proxy, type, event, refcon in
-          guard let refcon = refcon else { return Unmanaged.passRetained(event) }
+          // The event is owned by the system; pass it back unretained.
+          // Using passRetained here added a retain/release pair per event
+          // (i.e. on every modifier-key change system-wide).
+          guard let refcon = refcon else { return Unmanaged.passUnretained(event) }
           let manager = Unmanaged<HotKeyManager>.fromOpaque(refcon).takeUnretainedValue()
           return manager.handleEvent(proxy: proxy, type: type, event: event)
         },
@@ -85,7 +88,7 @@ class HotKeyManager {
       if let tap = eventTap {
         CGEvent.tapEnable(tap: tap, enable: true)
       }
-      return Unmanaged.passRetained(event)
+      return Unmanaged.passUnretained(event)
     }
 
     let flags = event.flags
@@ -120,7 +123,7 @@ class HotKeyManager {
       }
     }
 
-    return Unmanaged.passRetained(event)
+    return Unmanaged.passUnretained(event)
   }
 
   deinit {
