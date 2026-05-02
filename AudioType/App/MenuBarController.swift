@@ -17,16 +17,20 @@ extension NSImage {
   }
 }
 
-/// Shared observable for live audio level — drives the recording waveform.
+/// Shared observable for live audio level - drives the recording waveform.
+/// Also carries the overlay text so the hosting view doesn't have to be
+/// rebuilt on every state change.
 class AudioLevelMonitor: ObservableObject {
   static let shared = AudioLevelMonitor()
   @Published var level: Float = 0.0
+  @Published var overlayText: String = "Recording..."
 }
 
 class MenuBarController: NSObject, NSWindowDelegate {
   private weak var statusItem: NSStatusItem?
   private var transcriptionManager: TranscriptionManager
   private var recordingWindow: NSWindow?
+  private var recordingHostingView: NSHostingView<AnyView>?
   private var settingsWindow: NSWindow?
 
   init(transcriptionManager: TranscriptionManager) {
@@ -115,7 +119,7 @@ class MenuBarController: NSObject, NSWindowDelegate {
       updateStatusMenuItem("Ready")
 
     case .recording:
-      // Tinted coral/red — non-template so the color shows through
+      // Tinted coral/red - non-template so the color shows through
       if let base = NSImage(
         systemSymbolName: "waveform.circle.fill", accessibilityDescription: "Recording") {
         button.image = base.tinted(with: AudioTypeTheme.nsRecordingRed)
@@ -124,7 +128,7 @@ class MenuBarController: NSObject, NSWindowDelegate {
       updateStatusMenuItem("Recording...")
 
     case .processing:
-      // Tinted amber — "I'm thinking"
+      // Tinted amber - "I'm thinking"
       if let base = NSImage(
         systemSymbolName: "ellipsis.circle.fill", accessibilityDescription: "Processing") {
         button.image = base.tinted(with: AudioTypeTheme.nsAmber)
@@ -175,22 +179,27 @@ class MenuBarController: NSObject, NSWindowDelegate {
       recordingWindow = window
     }
 
-    let hostingView = NSHostingView(
-      rootView: RecordingOverlay(text: "Recording...")
-        .environmentObject(AudioLevelMonitor.shared))
-    hostingView.frame = NSRect(x: 0, y: 0, width: 180, height: 50)
-    recordingWindow?.contentView = hostingView
+    // Build the hosting view once; subsequent updates just mutate the
+    // observable state. Re-creating NSHostingView on every state change
+    // was leaking the SwiftUI graph and Metal layers.
+    if recordingHostingView == nil {
+      let hosting = NSHostingView(
+        rootView: AnyView(
+          RecordingOverlay()
+            .environmentObject(AudioLevelMonitor.shared)
+        )
+      )
+      hosting.frame = NSRect(x: 0, y: 0, width: 180, height: 50)
+      recordingHostingView = hosting
+      recordingWindow?.contentView = hosting
+    }
+
+    AudioLevelMonitor.shared.overlayText = "Recording..."
     recordingWindow?.orderFront(nil)
   }
 
   private func updateRecordingIndicator(text: String) {
-    if let window = recordingWindow {
-      let hostingView = NSHostingView(
-        rootView: RecordingOverlay(text: text)
-          .environmentObject(AudioLevelMonitor.shared))
-      hostingView.frame = NSRect(x: 0, y: 0, width: 180, height: 50)
-      window.contentView = hostingView
-    }
+    AudioLevelMonitor.shared.overlayText = text
   }
 
   private func hideRecordingIndicator() {
