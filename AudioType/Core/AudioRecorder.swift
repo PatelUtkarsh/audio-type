@@ -2,7 +2,10 @@ import AVFoundation
 import os.log
 
 class AudioRecorder {
-  private let audioEngine = AVAudioEngine()
+  // Lazily created on startRecording and torn down on stopRecording so the
+  // audio HAL doesn't stay warm between recordings (big idle-energy win for
+  // a menu-bar app).
+  private var audioEngine: AVAudioEngine?
   private var audioBuffer: [Float] = []
   private let bufferLock = NSLock()
   private var isRecording = false
@@ -16,8 +19,8 @@ class AudioRecorder {
   private let targetSampleRate: Double = 16000
 
   init() {
-    // Pre-allocate buffer for ~30 seconds of audio at 16kHz
-    audioBuffer.reserveCapacity(Int(targetSampleRate * 30))
+    // Buffer is allocated on each startRecording so the recorder has zero
+    // footprint when idle.
   }
 
   func startRecording() throws {
@@ -26,12 +29,17 @@ class AudioRecorder {
       return
     }
 
-    // Clear previous buffer
+    // Drop the buffer entirely (don't preserve capacity — see issue 1.4).
     bufferLock.lock()
-    audioBuffer.removeAll(keepingCapacity: true)
+    audioBuffer = []
+    audioBuffer.reserveCapacity(Int(targetSampleRate * 30))
     bufferLock.unlock()
 
-    let inputNode = audioEngine.inputNode
+    // Lazily create the audio engine on each recording.
+    let engine = AVAudioEngine()
+    audioEngine = engine
+
+    let inputNode = engine.inputNode
     let inputFormat = inputNode.outputFormat(forBus: 0)
 
     logger.info("Input format: \(inputFormat.sampleRate)Hz, \(inputFormat.channelCount) channels")
@@ -66,8 +74,8 @@ class AudioRecorder {
     }
 
     // Start audio engine
-    audioEngine.prepare()
-    try audioEngine.start()
+    engine.prepare()
+    try engine.start()
 
     isRecording = true
     logger.info("Recording started")
@@ -79,15 +87,21 @@ class AudioRecorder {
       return nil
     }
 
-    // Stop and remove tap
-    audioEngine.inputNode.removeTap(onBus: 0)
-    audioEngine.stop()
+    // Stop and tear down the engine so the audio HAL releases its resources.
+    if let engine = audioEngine {
+      engine.inputNode.removeTap(onBus: 0)
+      engine.stop()
+    }
+    audioEngine = nil
 
     isRecording = false
 
-    // Return captured samples
+    // Move the buffer out of the recorder (zero-copy via COW transfer) and
+    // leave the recorder with a fresh empty array so it doesn't keep the
+    // recording's high-water capacity in memory.
     bufferLock.lock()
     let samples = audioBuffer
+    audioBuffer = []
     bufferLock.unlock()
 
     logger.info(
