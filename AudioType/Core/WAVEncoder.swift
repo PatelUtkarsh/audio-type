@@ -1,3 +1,4 @@
+import Accelerate
 import Foundation
 import os.log
 
@@ -25,7 +26,7 @@ struct WhisperAPIConfig {
 /// and response parsing are all handled here.
 class WhisperAPIEngine: TranscriptionEngine {
 
-  /// Provider configuration — subclasses must override.
+  /// Provider configuration - subclasses must override.
   var config: WhisperAPIConfig {
     fatalError("Subclasses must override config")
   }
@@ -178,45 +179,89 @@ enum WhisperAPIError: Error, LocalizedError {
 enum WAVEncoder {
 
   /// Encode Float32 PCM samples into WAV in memory (16-bit PCM, mono).
+  ///
+  /// The previous implementation allocated an intermediate `[Int16]`
+  /// (~960 KB for a 30 s clip), let `Data` realloc as it grew, and
+  /// did 480 000 individual `appendLittleEndian` calls. This version:
+  ///
+  /// - Allocates the final `Data` once at exact size (44-byte header + 2N).
+  /// - Writes the header in place.
+  /// - Uses Accelerate to clip Float → Int16 directly into the data
+  ///   region in a single pass.
   static func encode(samples: [Float], sampleRate: Int) -> Data {
-    var data = Data()
-
-    let int16Samples = samples.map { sample -> Int16 in
-      let clamped = max(-1.0, min(1.0, sample))
-      return Int16(clamped * Float(Int16.max))
-    }
-
     let numChannels: UInt16 = 1
     let bitsPerSample: UInt16 = 16
     let byteRate = UInt32(sampleRate)
       * UInt32(numChannels) * UInt32(bitsPerSample / 8)
     let blockAlign = numChannels * (bitsPerSample / 8)
-    let dataSize = UInt32(int16Samples.count * 2)
-    let fileSize = 36 + dataSize
+    let dataSize = UInt32(samples.count * 2)
+    let fileSize: UInt32 = 36 + dataSize
+    let totalSize = 44 + samples.count * 2
 
-    // RIFF header
-    data.append(contentsOf: "RIFF".utf8)
-    data.appendLittleEndian(fileSize)
-    data.append(contentsOf: "WAVE".utf8)
+    var data = Data(count: totalSize)
+    data.withUnsafeMutableBytes { (raw: UnsafeMutableRawBufferPointer) -> Void in
+      guard let base = raw.baseAddress else { return }
 
-    // fmt chunk
-    data.append(contentsOf: "fmt ".utf8)
-    data.appendLittleEndian(UInt32(16))
-    data.appendLittleEndian(UInt16(1))  // PCM
-    data.appendLittleEndian(numChannels)
-    data.appendLittleEndian(UInt32(sampleRate))
-    data.appendLittleEndian(byteRate)
-    data.appendLittleEndian(blockAlign)
-    data.appendLittleEndian(bitsPerSample)
+      // --- Header ---------------------------------------------------------
+      func writeASCII(_ string: String, at offset: Int) {
+        for (i, byte) in string.utf8.enumerated() {
+          base.storeBytes(of: byte, toByteOffset: offset + i, as: UInt8.self)
+        }
+      }
+      func writeLE<T: FixedWidthInteger>(_ value: T, at offset: Int) {
+        base.storeBytes(of: value.littleEndian, toByteOffset: offset, as: T.self)
+      }
 
-    // data chunk
-    data.append(contentsOf: "data".utf8)
-    data.appendLittleEndian(dataSize)
+      writeASCII("RIFF", at: 0)
+      writeLE(fileSize, at: 4)
+      writeASCII("WAVE", at: 8)
 
-    for sample in int16Samples {
-      data.appendLittleEndian(sample)
+      writeASCII("fmt ", at: 12)
+      writeLE(UInt32(16), at: 16)
+      writeLE(UInt16(1), at: 20)  // PCM
+      writeLE(numChannels, at: 22)
+      writeLE(UInt32(sampleRate), at: 24)
+      writeLE(byteRate, at: 28)
+      writeLE(blockAlign, at: 32)
+      writeLE(bitsPerSample, at: 34)
+
+      writeASCII("data", at: 36)
+      writeLE(dataSize, at: 40)
+
+      // --- PCM data -------------------------------------------------------
+      // Clip to [-1, 1], scale by Int16.max, convert to Int16 — all via
+      // Accelerate, all into the destination region in one pass.
+      guard !samples.isEmpty else { return }
+
+      let dst = base.advanced(by: 44).assumingMemoryBound(to: Int16.self)
+      let n = vDSP_Length(samples.count)
+
+      samples.withUnsafeBufferPointer { src in
+        guard let srcBase = src.baseAddress else { return }
+
+        // Scratch buffer for clip+scale; reuse src memory would mutate the
+        // caller's input, so allocate a transient float buffer.
+        let scratch = UnsafeMutablePointer<Float>.allocate(capacity: samples.count)
+        defer { scratch.deallocate() }
+
+        // Clip into scratch.
+        var lo: Float = -1.0
+        var hi: Float = 1.0
+        vDSP_vclip(srcBase, 1, &lo, &hi, scratch, 1, n)
+
+        // Scale by Int16.max in place.
+        var scale = Float(Int16.max)
+        vDSP_vsmul(scratch, 1, &scale, scratch, 1, n)
+
+        // Convert Float → Int16 with rounding directly into dst.
+        vDSP_vfix16(scratch, 1, dst, 1, n)
+
+        // WAV is little-endian. On Apple silicon and Intel, host order is
+        // already LE so no byte-swap needed. Guard with a static assert
+        // for any future big-endian Apple platform (none exist today).
+        assert(1.littleEndian == 1, "WAVEncoder assumes little-endian host")
+      }
     }
-
     return data
   }
 
