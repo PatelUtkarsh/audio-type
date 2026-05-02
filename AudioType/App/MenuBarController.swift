@@ -33,6 +33,29 @@ class MenuBarController: NSObject, NSWindowDelegate {
   private var recordingHostingView: NSHostingView<AnyView>?
   private var settingsWindow: NSWindow?
 
+  // Pre-rendered status-bar icons, built once. Calling NSImage.tinted on
+  // every state change re-rasterizes the symbol via lockFocus/unlockFocus
+  // and was a steady source of bitmap allocations.
+  private lazy var idleIcon: NSImage? = {
+    let img = NSImage(
+      systemSymbolName: "waveform.circle.fill", accessibilityDescription: "Ready")
+    img?.isTemplate = true
+    return img
+  }()
+  private lazy var recordingIcon: NSImage? = {
+    NSImage(systemSymbolName: "waveform.circle.fill", accessibilityDescription: "Recording")?
+      .tinted(with: AudioTypeTheme.nsRecordingRed)
+  }()
+  private lazy var processingIcon: NSImage? = {
+    NSImage(systemSymbolName: "ellipsis.circle.fill", accessibilityDescription: "Processing")?
+      .tinted(with: AudioTypeTheme.nsAmber)
+  }()
+  private lazy var errorIcon: NSImage? = {
+    NSImage(
+      systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: "Error")?
+      .tinted(with: .systemRed)
+  }()
+
   init(transcriptionManager: TranscriptionManager) {
     self.transcriptionManager = transcriptionManager
     super.init()
@@ -114,38 +137,24 @@ class MenuBarController: NSObject, NSWindowDelegate {
 
     switch state {
     case .idle:
-      let img = NSImage(
-        systemSymbolName: "waveform.circle.fill", accessibilityDescription: "Ready")
-      img?.isTemplate = true
-      button.image = img
+      button.image = idleIcon
       AudioLevelMonitor.shared.level = 0
       hideRecordingIndicator()
       updateStatusMenuItem("Ready")
 
     case .recording:
-      // Tinted coral/red - non-template so the color shows through
-      if let base = NSImage(
-        systemSymbolName: "waveform.circle.fill", accessibilityDescription: "Recording") {
-        button.image = base.tinted(with: AudioTypeTheme.nsRecordingRed)
-      }
+      button.image = recordingIcon
       showRecordingIndicator()
       updateStatusMenuItem("Recording...")
 
     case .processing:
-      // Tinted amber - "I'm thinking"
-      if let base = NSImage(
-        systemSymbolName: "ellipsis.circle.fill", accessibilityDescription: "Processing") {
-        button.image = base.tinted(with: AudioTypeTheme.nsAmber)
-      }
+      button.image = processingIcon
       AudioLevelMonitor.shared.level = 0
       updateRecordingIndicator(text: "Processing...")
       updateStatusMenuItem("Processing...")
 
     case .error(let message):
-      let img = NSImage(
-        systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: "Error")
-      img?.isTemplate = false
-      button.image = img?.tinted(with: .systemRed)
+      button.image = errorIcon
       hideRecordingIndicator()
       updateStatusMenuItem("Error: \(message)")
     }
