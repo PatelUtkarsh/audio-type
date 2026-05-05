@@ -95,30 +95,7 @@ jobs:
         with:
           tag_name: v${{ steps.version.outputs.version }}
           name: AudioType v${{ steps.version.outputs.version }}
-          body: |
-            ## AudioType v${{ steps.version.outputs.version }}
-            
-            Voice-to-text for macOS with multiple transcription backends: Groq Whisper, OpenAI Whisper, and Apple Speech (on-device).
-            
-            ### What's New
-            - Cloud-powered transcription via Groq or OpenAI Whisper APIs
-            - On-device fallback via Apple Speech — works without an API key
-            - Self-serve: bring your own Groq (free tier) or OpenAI API key
-            
-            ### Installation
-            1. Download `AudioType.dmg` or `AudioType.zip`
-            2. Extract and move `AudioType.app` to your Applications folder
-            3. Open the app and grant Microphone, Accessibility, and Speech Recognition permissions
-            4. Optionally enter a Groq or OpenAI API key for cloud transcription
-            5. Hold the fn key to dictate
-            
-            ### Requirements
-            - macOS 14.0 or later
-            - Apple Silicon or Intel Mac
-            - Internet connection (for cloud engines; not needed for Apple Speech)
-            - API key optional (Groq free tier or OpenAI)
-            
-            > Looking for the offline/local version? See [v1.1.1](https://github.com/PatelUtkarsh/audio-type/releases/tag/v1.1.1)
+          generate_release_notes: true
           files: |
             AudioType.dmg
             AudioType.zip
