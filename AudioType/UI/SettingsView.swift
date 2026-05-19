@@ -1,4 +1,5 @@
 import AVFoundation
+import AppKit
 import ServiceManagement
 import Speech
 import SwiftUI
@@ -24,6 +25,12 @@ struct SettingsView: View {
   @State private var launchAtLoginRequiresApproval: Bool =
     SMAppService.mainApp.status == .requiresApproval
   @State private var launchAtLoginError: String?
+
+  // Hotkey binding state
+  @State private var hotKeyBinding: HotKeyBinding = HotKeyBindingStore.current
+  @State private var isCapturingHotKey = false
+  @State private var hotKeyCaptureWarning: String?
+  @State private var hotKeyEventMonitor: Any?
 
   var body: some View {
     Form {
@@ -175,10 +182,7 @@ struct SettingsView: View {
 
       // MARK: - General
       Section {
-        LabeledContent("Hotkey") {
-          Text("Hold fn")
-            .foregroundColor(.secondary)
-        }
+        hotKeyRow
 
         Toggle("Launch at Login", isOn: $launchAtLogin)
           .onChange(of: launchAtLogin) { newValue in
@@ -259,6 +263,94 @@ struct SettingsView: View {
       )
     ) { _ in
       refreshLaunchAtLoginStatus()
+    }
+    .onDisappear {
+      stopHotKeyCapture(save: false)
+    }
+  }
+
+  // MARK: - Hotkey row
+
+  @ViewBuilder
+  private var hotKeyRow: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      HStack {
+        Text("Hotkey")
+        Spacer()
+        Text("Hold \(hotKeyBinding.displayName)")
+          .foregroundColor(.secondary)
+        Button(isCapturingHotKey ? "Cancel" : "Change…") {
+          if isCapturingHotKey {
+            stopHotKeyCapture(save: false)
+          } else {
+            startHotKeyCapture()
+          }
+        }
+      }
+
+      if isCapturingHotKey {
+        Text("Press a modifier key… (Esc to cancel)")
+          .font(.caption)
+          .foregroundColor(.secondary)
+      }
+
+      if let warning = hotKeyCaptureWarning {
+        Text(warning)
+          .font(.caption)
+          .foregroundColor(.red)
+      }
+    }
+  }
+
+  // MARK: - Hotkey capture
+
+  private func startHotKeyCapture() {
+    hotKeyCaptureWarning = nil
+    isCapturingHotKey = true
+
+    // Remove any stale monitor before installing a new one.
+    if let monitor = hotKeyEventMonitor {
+      NSEvent.removeMonitor(monitor)
+      hotKeyEventMonitor = nil
+    }
+
+    hotKeyEventMonitor = NSEvent.addLocalMonitorForEvents(
+      matching: [.flagsChanged, .keyDown]
+    ) { event in
+      // Esc cancels capture.
+      if event.type == .keyDown && event.keyCode == 53 {
+        stopHotKeyCapture(save: false)
+        return nil
+      }
+
+      if event.type == .flagsChanged {
+        let keyCode = Int64(event.keyCode)
+        if let binding = HotKeyBinding.recognize(keyCode: keyCode) {
+          hotKeyBinding = binding
+          HotKeyBindingStore.current = binding
+          stopHotKeyCapture(save: true)
+          return nil
+        }
+        // flagsChanged for an unrecognized key shouldn't normally happen, but
+        // guard anyway.
+        hotKeyCaptureWarning = "That key isn't supported. Try Shift, Cmd, Option, Control, fn, or Caps Lock."
+        return nil
+      }
+
+      // Any other keyDown (letter, F-key, etc.) is rejected; stay in capture mode.
+      hotKeyCaptureWarning = "Please press a modifier key (Shift, Cmd, Option, Control, fn, or Caps Lock)."
+      return nil
+    }
+  }
+
+  private func stopHotKeyCapture(save: Bool) {
+    if let monitor = hotKeyEventMonitor {
+      NSEvent.removeMonitor(monitor)
+      hotKeyEventMonitor = nil
+    }
+    isCapturingHotKey = false
+    if save {
+      hotKeyCaptureWarning = nil
     }
   }
 

@@ -20,8 +20,13 @@ class HotKeyManager {
   // releases its reference. We balance the retain in stopListening.
   private var refconRetained: Unmanaged<HotKeyManager>?
 
-  // Track fn key state
-  private var fnKeyWasPressed = false
+  // Track whether the bound key is currently held.
+  private var bindingKeyWasPressed = false
+
+  // The active hotkey binding, refreshed from HotKeyBindingStore on start
+  // and whenever the user changes it via Settings.
+  private var activeBinding: HotKeyBinding = HotKeyBindingStore.current
+  private var bindingChangeObserver: NSObjectProtocol?
 
   private let logger = Logger(subsystem: "com.audiotype", category: "HotKeyManager")
 
@@ -32,7 +37,23 @@ class HotKeyManager {
   func startListening() {
     stopListening()
 
-    // Use CGEventTap for fn key detection
+    activeBinding = HotKeyBindingStore.current
+
+    // Observe binding changes so the user can rebind without restarting the app.
+    bindingChangeObserver = NotificationCenter.default.addObserver(
+      forName: HotKeyBindingStore.didChangeNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      guard let self = self else { return }
+      let newBinding = HotKeyBindingStore.current
+      self.logger.info("Hotkey binding changed to \(newBinding.displayName, privacy: .public)")
+      self.activeBinding = newBinding
+      // If we were tracking a press on the old binding, drop it.
+      self.bindingKeyWasPressed = false
+    }
+
+    // Use CGEventTap for modifier-key detection
     let eventMask: CGEventMask = (1 << CGEventType.flagsChanged.rawValue)
 
     // Retain self for the duration of the tap. Released in stopListening.
@@ -69,7 +90,7 @@ class HotKeyManager {
       CGEvent.tapEnable(tap: tap, enable: true)
     }
 
-    logger.info("Hotkey listener started (Hold fn)")
+    logger.info("Hotkey listener started (Hold \(self.activeBinding.displayName, privacy: .public))")
   }
 
   func stopListening() {
@@ -87,7 +108,12 @@ class HotKeyManager {
     eventTap = nil
     runLoopSource = nil
     isRecording = false
-    fnKeyWasPressed = false
+    bindingKeyWasPressed = false
+
+    if let observer = bindingChangeObserver {
+      NotificationCenter.default.removeObserver(observer)
+      bindingChangeObserver = nil
+    }
 
     // Balance the retain taken in startListening. Done last so any
     // callback already in-flight against the now-disabled tap still sees
@@ -111,36 +137,38 @@ class HotKeyManager {
       return Unmanaged.passUnretained(event)
     }
 
-    let flags = event.flags
+    guard type == .flagsChanged else {
+      return Unmanaged.passUnretained(event)
+    }
 
-    // Check for fn key via the secondary fn flag
-    let fnPressed = flags.contains(.maskSecondaryFn)
-    let hasCommand = flags.contains(.maskCommand)
-    let hasShift = flags.contains(.maskShift)
-    let hasOption = flags.contains(.maskAlternate)
-    let hasControl = flags.contains(.maskControl)
+    let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+    let binding = activeBinding
 
-    // Hold fn mode - detect via flagsChanged
-    if type == .flagsChanged {
-      let onlyFn = fnPressed && !hasCommand && !hasShift && !hasOption && !hasControl
+    // Only react to flag changes on the bound key. Other modifiers being held
+    // (e.g. Left Shift while the user presses Right Cmd as the binding) are
+    // ignored intentionally.
+    guard keyCode == binding.keyCode else {
+      return Unmanaged.passUnretained(event)
+    }
 
-      if onlyFn && !fnKeyWasPressed && !isRecording {
-        fnKeyWasPressed = true
-        isRecording = true
-        logger.info("fn key pressed - starting recording")
-        DispatchQueue.main.async {
-          self.callback(.keyDown)
-        }
-      } else if !fnPressed && fnKeyWasPressed && isRecording {
-        fnKeyWasPressed = false
-        isRecording = false
-        logger.info("fn key released - stopping recording")
-        DispatchQueue.main.async {
-          self.callback(.keyUp)
-        }
-      } else if !fnPressed {
-        fnKeyWasPressed = false
+    let bindingBitSet = (event.flags.rawValue & binding.flagMask) != 0
+
+    if bindingBitSet && !bindingKeyWasPressed && !isRecording {
+      bindingKeyWasPressed = true
+      isRecording = true
+      logger.info("\(binding.displayName, privacy: .public) pressed - starting recording")
+      DispatchQueue.main.async {
+        self.callback(.keyDown)
       }
+    } else if !bindingBitSet && bindingKeyWasPressed && isRecording {
+      bindingKeyWasPressed = false
+      isRecording = false
+      logger.info("\(binding.displayName, privacy: .public) released - stopping recording")
+      DispatchQueue.main.async {
+        self.callback(.keyUp)
+      }
+    } else if !bindingBitSet {
+      bindingKeyWasPressed = false
     }
 
     return Unmanaged.passUnretained(event)
