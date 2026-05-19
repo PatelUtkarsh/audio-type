@@ -8,6 +8,12 @@ enum HotKeyEvent {
   case keyUp
 }
 
+extension Notification.Name {
+  /// Posted when `CGEvent.tapCreate` fails, almost always because Accessibility
+  /// permission isn't actually trusted for the running binary.
+  static let hotKeyTapCreationFailed = Notification.Name("hotKeyTapCreationFailed")
+}
+
 class HotKeyManager {
   private var eventTap: CFMachPort?
   private var runLoopSource: CFRunLoopSource?
@@ -79,6 +85,9 @@ class HotKeyManager {
       retained.release()
       refconRetained = nil
       logger.error("Failed to create event tap. Accessibility permission may be required.")
+      // Surface the failure so the menu bar can show an error state and the
+      // user understands the hotkey isn't going to work.
+      NotificationCenter.default.post(name: .hotKeyTapCreationFailed, object: nil)
       return
     }
 
