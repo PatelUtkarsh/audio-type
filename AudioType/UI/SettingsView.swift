@@ -4,7 +4,6 @@ import Speech
 import SwiftUI
 
 struct SettingsView: View {
-  @AppStorage("launchAtLogin") private var launchAtLogin = false
   @State private var selectedEngine = TranscriptionEngineType.current
   @State private var selectedGroqModel = GroqModel.current
   @State private var selectedOpenAIModel = OpenAIModel.current
@@ -19,6 +18,12 @@ struct SettingsView: View {
   @State private var openaiApiKey: String = ""
   @State private var isOpenAIKeySet: Bool = OpenAIEngine.isConfigured
   @State private var openaiKeySaveError: String?
+
+  // Launch at login state — source of truth is SMAppService.mainApp.status
+  @State private var launchAtLogin: Bool = SMAppService.mainApp.status == .enabled
+  @State private var launchAtLoginRequiresApproval: Bool =
+    SMAppService.mainApp.status == .requiresApproval
+  @State private var launchAtLoginError: String?
 
   var body: some View {
     Form {
@@ -179,6 +184,24 @@ struct SettingsView: View {
           .onChange(of: launchAtLogin) { newValue in
             setLaunchAtLogin(newValue)
           }
+
+        if launchAtLoginRequiresApproval {
+          VStack(alignment: .leading, spacing: 4) {
+            Text("Approval needed in System Settings → Login Items.")
+              .font(.caption)
+              .foregroundColor(.secondary)
+            Button("Open Login Items") {
+              openLoginItemsSettings()
+            }
+            .font(.caption)
+          }
+        }
+
+        if let error = launchAtLoginError {
+          Text(error)
+            .font(.caption)
+            .foregroundColor(.red)
+        }
       } header: {
         Text("General")
       }
@@ -227,6 +250,16 @@ struct SettingsView: View {
     }
     .formStyle(.grouped)
     .frame(width: 400, height: 680)
+    .onAppear {
+      refreshLaunchAtLoginStatus()
+    }
+    .onReceive(
+      NotificationCenter.default.publisher(
+        for: NSApplication.didBecomeActiveNotification
+      )
+    ) { _ in
+      refreshLaunchAtLoginStatus()
+    }
   }
 
   // MARK: - Shared API key field
@@ -308,14 +341,34 @@ struct SettingsView: View {
   }
 
   private func setLaunchAtLogin(_ enabled: Bool) {
+    launchAtLoginError = nil
+    let service = SMAppService.mainApp
     do {
       if enabled {
-        try SMAppService.mainApp.register()
+        try service.register()
       } else {
-        try SMAppService.mainApp.unregister()
+        try service.unregister()
       }
     } catch {
-      print("Failed to set launch at login: \(error)")
+      launchAtLoginError = "Couldn't update login item: \(error.localizedDescription)"
+    }
+    // Always re-sync from the system after attempting a change so the toggle
+    // reflects reality (including the .requiresApproval case where register()
+    // succeeds but macOS is waiting on user consent).
+    refreshLaunchAtLoginStatus()
+  }
+
+  private func refreshLaunchAtLoginStatus() {
+    let status = SMAppService.mainApp.status
+    launchAtLogin = (status == .enabled)
+    launchAtLoginRequiresApproval = (status == .requiresApproval)
+  }
+
+  private func openLoginItemsSettings() {
+    if let url = URL(
+      string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extensionPoint"
+    ) {
+      NSWorkspace.shared.open(url)
     }
   }
 }
