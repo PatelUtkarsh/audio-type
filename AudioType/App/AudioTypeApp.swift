@@ -14,6 +14,8 @@ struct AudioTypeApp: App {
 
 @MainActor
 class AppDelegate: NSObject, NSApplicationDelegate {
+  static let onboardingCompletedKey = "onboardingCompleted"
+
   private var statusItem: NSStatusItem!
   private var menuBarController: MenuBarController!
   private var transcriptionManager: TranscriptionManager!
@@ -47,15 +49,47 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   private func checkPermissions() async {
     let micPermission = await Permissions.checkMicrophone()
     let accessibilityPermission = Permissions.checkAccessibility()
+    let engineAvailable = EngineResolver.anyEngineAvailable
+    let allGood = micPermission && accessibilityPermission && engineAvailable
 
-    // Show onboarding if permissions are missing or no engine is usable
-    if !micPermission || !accessibilityPermission || !EngineResolver.anyEngineAvailable {
-      await MainActor.run {
-        showOnboarding()
-      }
-    } else {
-      // All set — start listening for hotkey
+    if allGood {
+      markOnboardingCompleted()
       await transcriptionManager.initialize()
+      return
+    }
+
+    // If the user already completed onboarding before but accessibility is
+    // now failing, it's almost always a cdhash mismatch after a fresh release
+    // (TCC.db still says granted, but AXIsProcessTrusted returns false because
+    // the saved cdhash no longer matches the ad-hoc-signed binary). Show a
+    // narrow re-approval prompt instead of the full first-run onboarding.
+    let onboardingDone = UserDefaults.standard.bool(forKey: Self.onboardingCompletedKey)
+    if onboardingDone && micPermission && engineAvailable && !accessibilityPermission {
+      await MainActor.run {
+        showReapprovePrompt()
+      }
+      return
+    }
+
+    await MainActor.run {
+      showOnboarding()
+    }
+  }
+
+  fileprivate func markOnboardingCompleted() {
+    UserDefaults.standard.set(true, forKey: Self.onboardingCompletedKey)
+  }
+
+  fileprivate func startTranscriptionIfNeeded() {
+    Task {
+      await self.transcriptionManager.initialize()
+    }
+  }
+
+  fileprivate func dismissOnboarding() {
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+      self.onboardingWindow?.orderOut(nil)
+      self.onboardingWindow = nil
     }
   }
 
@@ -75,14 +109,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     window.contentView = NSHostingView(
       rootView: OnboardingView { [weak self] in
-        // Delay to let animations complete before releasing
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-          self?.onboardingWindow?.orderOut(nil)
-          self?.onboardingWindow = nil
-        }
-        Task {
-          await self?.transcriptionManager.initialize()
-        }
+        guard let self = self else { return }
+        self.markOnboardingCompleted()
+        self.dismissOnboarding()
+        self.startTranscriptionIfNeeded()
+      })
+    window.makeKeyAndOrderFront(nil)
+    NSApp.activate(ignoringOtherApps: true)
+  }
+
+  private func showReapprovePrompt() {
+    let window = NSWindow(
+      contentRect: NSRect(x: 0, y: 0, width: 420, height: 280),
+      styleMask: [.titled],
+      backing: .buffered,
+      defer: false
+    )
+    window.title = "AudioType needs re-approval"
+    window.center()
+    window.isReleasedWhenClosed = false
+    self.onboardingWindow = window
+
+    window.contentView = NSHostingView(
+      rootView: ReapproveAccessibilityView { [weak self] in
+        guard let self = self else { return }
+        self.dismissOnboarding()
+        self.startTranscriptionIfNeeded()
       })
     window.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)

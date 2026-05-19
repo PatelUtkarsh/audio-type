@@ -9,8 +9,12 @@ struct OnboardingView: View {
   @State private var anyCloudKeyConfigured = GroqEngine.isConfigured || OpenAIEngine.isConfigured
   @State private var apiKeyText = ""
   @State private var apiKeySaveError: String?
+  @State private var didAutoComplete = false
 
-  let timer = Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
+  // Poll every 2 seconds to pick up permission changes the user made in
+  // System Settings. Cheaper than the previous 0.5s cadence and we stop
+  // polling entirely once everything's ready (see onReceive below).
+  let timer = Timer.publish(every: 2.0, on: .main, in: .common).autoconnect()
 
   let onComplete: () -> Void
 
@@ -164,14 +168,24 @@ struct OnboardingView: View {
       checkPermissions()
     }
     .onReceive(timer) { _ in
-      // Continuously refresh permission state so the UI reflects changes made
-      // in System Settings. The user closes the window themselves via the
-      // "Get Started" button once everything is ready.
-      microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-      accessibilityGranted = Permissions.checkAccessibility()
-      speechRecognitionGranted = Permissions.isSpeechRecognitionAuthorized
-      anyCloudKeyConfigured = GroqEngine.isConfigured || OpenAIEngine.isConfigured
+      refreshPermissionState()
+
+      // Once every required permission lands, finish onboarding automatically.
+      // This avoids the trap where the user grants AX in System Settings,
+      // returns to AudioType, but the hotkey listener never starts because
+      // they haven't clicked "Get Started" yet.
+      if canContinue && !didAutoComplete {
+        didAutoComplete = true
+        onComplete()
+      }
     }
+  }
+
+  private func refreshPermissionState() {
+    microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+    accessibilityGranted = Permissions.checkAccessibility()
+    speechRecognitionGranted = Permissions.isSpeechRecognitionAuthorized
+    anyCloudKeyConfigured = GroqEngine.isConfigured || OpenAIEngine.isConfigured
   }
 
   /// The user can proceed once mic + accessibility are granted AND at least one engine is usable.
@@ -255,5 +269,58 @@ struct PermissionRow: View {
       }
     }
     .padding(.vertical, 8)
+  }
+}
+
+/// Slim follow-up shown after a re-install/update when the user has already
+/// granted Accessibility before, but the new binary's cdhash doesn't match
+/// the saved TCC entry so `AXIsProcessTrusted` returns false. Recovering
+/// only requires removing + re-adding AudioType in Accessibility settings.
+struct ReapproveAccessibilityView: View {
+  let onApproved: () -> Void
+
+  // Poll every 2 seconds and dismiss as soon as AX trust comes back.
+  let timer = Timer.publish(every: 2.0, on: .main, in: .common).autoconnect()
+  @State private var didFinish = false
+
+  var body: some View {
+    VStack(spacing: 20) {
+      Image(systemName: "lock.shield")
+        .font(.system(size: 40))
+        .foregroundColor(AudioTypeTheme.coral)
+
+      Text("AudioType needs re-approval")
+        .font(.title3)
+        .fontWeight(.semibold)
+
+      Text(
+        "After updating AudioType, macOS needs you to re-approve "
+          + "Accessibility access. In System Settings, remove AudioType from "
+          + "the Accessibility list and add it back from /Applications."
+      )
+      .font(.callout)
+      .multilineTextAlignment(.center)
+      .foregroundColor(.secondary)
+      .padding(.horizontal)
+      .fixedSize(horizontal: false, vertical: true)
+
+      Button("Open Accessibility Settings") {
+        Permissions.openAccessibilitySettings()
+      }
+      .buttonStyle(.borderedProminent)
+      .tint(AudioTypeTheme.coral)
+
+      Text("This window closes itself when access is restored.")
+        .font(.caption)
+        .foregroundColor(.secondary)
+    }
+    .padding(24)
+    .frame(width: 420)
+    .onReceive(timer) { _ in
+      if Permissions.checkAccessibility() && !didFinish {
+        didFinish = true
+        onApproved()
+      }
+    }
   }
 }

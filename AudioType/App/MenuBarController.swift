@@ -75,6 +75,23 @@ class MenuBarController: NSObject, NSWindowDelegate {
       name: .audioLevelChanged,
       object: nil
     )
+
+    // Refresh the hotkey menu item when the binding changes from Settings.
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(hotKeyBindingDidChange),
+      name: HotKeyBindingStore.didChangeNotification,
+      object: nil
+    )
+
+    // Surface a clear error in the menu bar when the event tap can't be
+    // created — almost always an Accessibility permission problem.
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(hotKeyTapFailed),
+      name: .hotKeyTapCreationFailed,
+      object: nil
+    )
   }
 
   deinit {
@@ -96,8 +113,13 @@ class MenuBarController: NSObject, NSWindowDelegate {
     statusMenuItem.tag = 100  // Tag to identify status item
     menu.addItem(statusMenuItem)
 
-    // Hotkey info
-    let hotkeyItem = NSMenuItem(title: "Hotkey: Hold fn", action: nil, keyEquivalent: "")
+    // Hotkey info (live-updated when the binding changes in Settings)
+    let hotkeyItem = NSMenuItem(
+      title: hotkeyMenuTitle(),
+      action: nil,
+      keyEquivalent: ""
+    )
+    hotkeyItem.tag = 101
     hotkeyItem.isEnabled = false
     menu.addItem(hotkeyItem)
 
@@ -165,6 +187,41 @@ class MenuBarController: NSObject, NSWindowDelegate {
       let item = menu.item(withTag: 100) {
       item.title = text
     }
+  }
+
+  private func hotkeyMenuTitle() -> String {
+    "Hotkey: Hold \(HotKeyBindingStore.current.displayName)"
+  }
+
+  @objc private func hotKeyBindingDidChange() {
+    DispatchQueue.main.async { [weak self] in
+      guard let self = self,
+        let menu = self.statusItem?.menu,
+        let item = menu.item(withTag: 101)
+      else { return }
+      item.title = self.hotkeyMenuTitle()
+    }
+  }
+
+  @objc private func hotKeyTapFailed() {
+    DispatchQueue.main.async { [weak self] in
+      guard let self = self, let button = self.statusItem?.button else { return }
+      button.image = self.errorIcon
+      self.updateStatusMenuItem("Accessibility permission required")
+      self.replaceHotkeyItemWithAccessibilityFix()
+    }
+  }
+
+  private func replaceHotkeyItemWithAccessibilityFix() {
+    guard let menu = statusItem?.menu, let item = menu.item(withTag: 101) else { return }
+    item.title = "Open Accessibility Settings…"
+    item.action = #selector(openAccessibilitySettingsFromMenu)
+    item.target = self
+    item.isEnabled = true
+  }
+
+  @objc private func openAccessibilitySettingsFromMenu() {
+    Permissions.openAccessibilitySettings()
   }
 
   private func showRecordingIndicator() {
