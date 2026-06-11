@@ -21,14 +21,12 @@ enum TranscriptionState: Equatable {
 
 /// User preference for live typing: transcribe and type chunks at natural
 /// pauses while the hotkey is still held, instead of waiting for release.
+/// Off by default; opt in via Settings → General.
 enum LiveTypingSetting {
   private static let key = "liveTypingEnabled"
 
   static var isEnabled: Bool {
-    get {
-      if UserDefaults.standard.object(forKey: key) == nil { return true }
-      return UserDefaults.standard.bool(forKey: key)
-    }
+    get { UserDefaults.standard.bool(forKey: key) }
     set { UserDefaults.standard.set(newValue, forKey: key) }
   }
 }
@@ -63,6 +61,14 @@ class TranscriptionManager: ObservableObject {
   /// first letter). True at session start; afterwards tracks whether the
   /// previous chunk ended with terminal punctuation.
   private var nextChunkStartsSentence = true
+
+  /// Whether the last character AudioType typed was whitespace. When it
+  /// wasn't, the next chunk gets one separator space typed up front as its
+  /// own keystroke - editors with smart paste can strip whitespace at the
+  /// edges of pasted payloads, so the separator never rides along inside a
+  /// pasted chunk. Persists across sessions so back-to-back dictations stay
+  /// separated even when a session ended abnormally.
+  private var lastInsertEndedWithWhitespace = true
 
   /// Chunks sent so far in the current session (live cuts + final tail).
   private var sessionChunkCount = 0
@@ -311,7 +317,15 @@ class TranscriptionManager: ObservableObject {
     let processed = TextPostProcessor.shared.process(
       trimmed, capitalizeFirst: nextChunkStartsSentence
     )
-    textInserter?.insertText(processed + " ")
+
+    // Separator first, as a standalone keystroke (a 1-char insert always
+    // takes the keystroke path, never the clipboard).
+    if !lastInsertEndedWithWhitespace {
+      textInserter?.insertText(" ")
+    }
+    textInserter?.insertText(processed)
+    lastInsertEndedWithWhitespace = processed.last?.isWhitespace ?? false
+
     if let last = processed.last {
       nextChunkStartsSentence =
         last == "." || last == "!" || last == "?" || last == "\n"
@@ -334,6 +348,14 @@ class TranscriptionManager: ObservableObject {
       // Only the processing state transitions to idle here; an error set by
       // the final chunk (or a newer session's state) is left alone.
       if case .processing = self.state {
+        // Close the dictation with one trailing space keystroke so the next
+        // session (or the user's own typing) doesn't run into this text.
+        // Skipped when nothing was inserted or output already ends in
+        // whitespace.
+        if !self.lastInsertEndedWithWhitespace {
+          self.textInserter?.insertText(" ")
+          self.lastInsertEndedWithWhitespace = true
+        }
         self.setState(.idle)
       }
     }

@@ -123,7 +123,7 @@ fn key released → TranscriptionManager.stopRecordingAndTranscribe()     │
                            text typed into focused app
 ```
 
-Live Typing (chunked transcription while the key is held) is on by default and toggleable in Settings → General. With it off, the session is a single final chunk, the pre-existing behavior.
+Live Typing (chunked transcription while the key is held) is off by default and toggleable in Settings → General. With it off, the session is a single final chunk, the pre-existing behavior.
 
 ### Permission Requirements
 
