@@ -100,15 +100,21 @@ fn key held → HotKeyManager → TranscriptionManager.startRecording()
                                     ↓
                               AudioRecorder (AVAudioEngine, 16kHz mono PCM)
                                     ↓
-fn key released → TranscriptionManager.stopRecordingAndTranscribe()
-                                    ↓
-                        EngineResolver.resolve() → TranscriptionEngine
+        ┌─ while held (Live Typing on): SpeechPauseDetector watches mic
+        │  levels; at a natural pause the buffer is drained as a chunk ─┐
+        ↓                                                               │
+fn key released → TranscriptionManager.stopRecordingAndTranscribe()     │
+        (remaining audio becomes the final chunk)                       │
+                                    ↓ ←─────────────────────────────────┘
+                        per chunk: EngineResolver.resolve() → TranscriptionEngine
                      ↓                  ↓                     ↓
                 GroqEngine         OpenAIEngine        AppleSpeechEngine
              (WhisperAPIEngine   (WhisperAPIEngine   (SFSpeechAudioBuffer-
               → Groq API)         → OpenAI API)       RecognitionRequest)
                      ↓                  ↓                     ↓
                               transcribed text
+                  (chunk API calls may overlap; insertion is
+                   serialized so text lands in spoken order)
                                     ↓
                          TextPostProcessor (corrections)
                                     ↓
@@ -116,6 +122,8 @@ fn key released → TranscriptionManager.stopRecordingAndTranscribe()
                                     ↓
                            text typed into focused app
 ```
+
+Live Typing (chunked transcription while the key is held) is off by default and toggleable in Settings → General. With it off, the session is a single final chunk, the pre-existing behavior.
 
 ### Permission Requirements
 

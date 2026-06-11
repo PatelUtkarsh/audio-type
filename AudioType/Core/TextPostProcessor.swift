@@ -119,10 +119,14 @@ class TextPostProcessor {
     rebuildRegex()
   }
 
-  /// Process transcribed text with corrections
-  func process(_ text: String) -> String {
+  /// Process transcribed text with corrections.
+  ///
+  /// `capitalizeFirst` controls whether the first letter gets uppercased.
+  /// Live typing passes false when the previous chunk didn't end a sentence,
+  /// so a chunk continuing mid-sentence isn't wrongly capitalized.
+  func process(_ text: String, capitalizeFirst: Bool = true) -> String {
     let result = applyReplacements(text)
-    return capitalizeSentences(result)
+    return capitalizeSentences(result, capitalizeFirst: capitalizeFirst)
   }
 
   /// Add a custom word replacement
@@ -213,9 +217,9 @@ class TextPostProcessor {
     return result
   }
 
-  private func capitalizeSentences(_ text: String) -> String {
+  private func capitalizeSentences(_ text: String, capitalizeFirst: Bool) -> String {
     var result = ""
-    var capitalizeNext = true
+    var capitalizeNext = capitalizeFirst
 
     for char in text {
       if capitalizeNext && char.isLetter {
