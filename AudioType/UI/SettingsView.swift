@@ -32,6 +32,9 @@ struct SettingsView: View {
   @State private var hotKeyCaptureWarning: String?
   @State private var hotKeyEventMonitor: Any?
 
+  // Live typing state
+  @State private var liveTyping: Bool = LiveTypingSetting.isEnabled
+
   var body: some View {
     Form {
       // MARK: - Engine Selection
@@ -183,6 +186,14 @@ struct SettingsView: View {
       // MARK: - General
       Section {
         hotKeyRow
+
+        Toggle("Live Typing", isOn: $liveTyping)
+          .onChange(of: liveTyping) { newValue in
+            LiveTypingSetting.isEnabled = newValue
+          }
+        Text("Type at natural pauses while you hold the hotkey, instead of all at once on release.")
+          .font(.caption)
+          .foregroundColor(.secondary)
 
         Toggle("Launch at Login", isOn: $launchAtLogin)
           .onChange(of: launchAtLogin) { newValue in
