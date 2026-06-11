@@ -25,6 +25,11 @@ let package = Package(
                 .linkedFramework("Speech"),
                 .linkedFramework("Security")
             ]
+        ),
+        .testTarget(
+            name: "AudioTypeTests",
+            dependencies: ["AudioType"],
+            path: "Tests/AudioTypeTests"
         )
     ]
 )
