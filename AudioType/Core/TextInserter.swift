@@ -58,6 +58,13 @@ class TextInserter {
     keyDown.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: &utf16)
     keyUp.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: &utf16)
 
+    // Clear modifier flags: with live typing the user is still physically
+    // holding the hotkey (fn or a modifier), and synthetic events sourced
+    // from hidSystemState would otherwise inherit it, turning plain
+    // characters into modified keystrokes in some apps.
+    keyDown.flags = []
+    keyUp.flags = []
+
     // Post events
     keyDown.post(tap: .cgSessionEventTap)
     keyUp.post(tap: .cgSessionEventTap)
