@@ -61,9 +61,11 @@ class OpenAIEngine: WhisperAPIEngine {
 
   static func setApiKey(_ key: String) throws {
     try KeychainHelper.save(key: openAIConfig.keychainKey, value: key)
+    EngineResolver.invalidateCache()
   }
 
   static func clearApiKey() {
     KeychainHelper.delete(key: openAIConfig.keychainKey)
+    EngineResolver.invalidateCache()
   }
 }
