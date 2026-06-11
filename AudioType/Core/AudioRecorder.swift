@@ -17,7 +17,18 @@ class AudioRecorder {
   private let logger = Logger(subsystem: "com.audiotype", category: "AudioRecorder")
 
   // Whisper requires 16kHz mono audio
-  private let targetSampleRate: Double = 16000
+  private static let targetSampleRate: Double = 16000
+
+  /// Hard cap on recording length. Bounds buffer growth (~3.8 MB/min as
+  /// Float32) from a stuck or forgotten hotkey, and keeps the encoded WAV
+  /// well under the 25 MB cloud upload limit (5 min mono 16-bit @ 16 kHz
+  /// is ~9.6 MB).
+  private static let maxRecordingDuration: TimeInterval = 300
+  private static let maxRecordingSamples = Int(targetSampleRate * maxRecordingDuration)
+
+  // Set once per recording when the cap is first hit, so we log the drop
+  // exactly once. Only touched from the tap callback queue.
+  private var didLogCapReached = false
 
   init() {
     // Buffer is allocated on each startRecording so the recorder has zero
@@ -35,8 +46,9 @@ class AudioRecorder {
       bufferLock.lock()
       defer { bufferLock.unlock() }
       audioBuffer = []
-      audioBuffer.reserveCapacity(Int(targetSampleRate * 30))
+      audioBuffer.reserveCapacity(Int(Self.targetSampleRate * 30))
     }
+    didLogCapReached = false
 
     // Lazily create the audio engine on each recording.
     let engine = AVAudioEngine()
@@ -51,7 +63,7 @@ class AudioRecorder {
     guard
       let targetFormat = AVAudioFormat(
         commonFormat: .pcmFormatFloat32,
-        sampleRate: targetSampleRate,
+        sampleRate: Self.targetSampleRate,
         channels: 1,
         interleaved: false
       )
@@ -61,7 +73,7 @@ class AudioRecorder {
 
     // Create converter if sample rates differ
     let converter: AVAudioConverter?
-    if inputFormat.sampleRate != targetSampleRate || inputFormat.channelCount != 1 {
+    if inputFormat.sampleRate != Self.targetSampleRate || inputFormat.channelCount != 1 {
       converter = AVAudioConverter(from: inputFormat, to: targetFormat)
       if converter == nil {
         logger.error("Failed to create audio converter")
@@ -111,7 +123,7 @@ class AudioRecorder {
     }
 
     logger.info(
-      "Recording stopped, captured \(samples.count) samples (\(Double(samples.count) / self.targetSampleRate, format: .fixed(precision: 2))s)"
+      "Recording stopped, captured \(samples.count) samples (\(Double(samples.count) / Self.targetSampleRate, format: .fixed(precision: 2))s)"
     )
 
     return samples.isEmpty ? nil : samples
@@ -122,7 +134,7 @@ class AudioRecorder {
   ) {
     if let converter = converter {
       let frameCount = AVAudioFrameCount(
-        Double(buffer.frameLength) * targetSampleRate / buffer.format.sampleRate
+        Double(buffer.frameLength) * Self.targetSampleRate / buffer.format.sampleRate
       )
 
       guard
@@ -172,11 +184,23 @@ class AudioRecorder {
 
     // Append directly from the unsafe buffer pointer; [Float] has an
     // append(contentsOf:) overload that takes any Sequence, including
-    // UnsafeBufferPointer, so no intermediate Array is allocated.
+    // UnsafeBufferPointer, so no intermediate Array is allocated. Capped at
+    // maxRecordingSamples; past the cap we keep reporting levels (the
+    // waveform stays live) but drop the samples.
     let ptr = UnsafeBufferPointer(start: samples, count: count)
     bufferLock.lock()
-    defer { bufferLock.unlock() }
-    audioBuffer.append(contentsOf: ptr)
+    let remaining = Self.maxRecordingSamples - audioBuffer.count
+    if remaining > 0 {
+      audioBuffer.append(contentsOf: ptr.prefix(min(count, remaining)))
+    }
+    bufferLock.unlock()
+
+    if remaining < count && !didLogCapReached {
+      didLogCapReached = true
+      logger.warning(
+        "Recording cap reached (\(Int(Self.maxRecordingDuration))s); dropping further samples"
+      )
+    }
   }
 }
 

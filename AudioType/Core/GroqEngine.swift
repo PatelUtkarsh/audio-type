@@ -143,9 +143,11 @@ class GroqEngine: WhisperAPIEngine {
 
   static func setApiKey(_ key: String) throws {
     try KeychainHelper.save(key: groqConfig.keychainKey, value: key)
+    EngineResolver.invalidateCache()
   }
 
   static func clearApiKey() {
     KeychainHelper.delete(key: groqConfig.keychainKey)
+    EngineResolver.invalidateCache()
   }
 }

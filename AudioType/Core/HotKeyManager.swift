@@ -62,6 +62,16 @@ class HotKeyManager {
     // Use CGEventTap for modifier-key detection
     let eventMask: CGEventMask = (1 << CGEventType.flagsChanged.rawValue)
 
+    // Prefer a listen-only (passive) tap: we never modify or consume events,
+    // and an active tap forces every flagsChanged event system-wide through
+    // this process synchronously before delivery. Listen-only taps need the
+    // ListenEvent (Input Monitoring) grant, which Accessibility trust - the
+    // permission this app already requires for CGEventPost - is a superset
+    // of. Preflight anyway: a listen-only tap created without the grant can
+    // come back non-nil yet silently deliver no events, whereas .defaultTap
+    // returns nil without Accessibility, which drives our failure UX below.
+    let options: CGEventTapOptions = CGPreflightListenEventAccess() ? .listenOnly : .defaultTap
+
     // Retain self for the duration of the tap. Released in stopListening.
     let retained = Unmanaged.passRetained(self)
     refconRetained = retained
@@ -70,7 +80,7 @@ class HotKeyManager {
       let tap = CGEvent.tapCreate(
         tap: .cgSessionEventTap,
         place: .headInsertEventTap,
-        options: .defaultTap,
+        options: options,
         eventsOfInterest: eventMask,
         callback: { proxy, type, event, refcon in
           // The event is owned by the system; pass it back unretained.
@@ -99,7 +109,9 @@ class HotKeyManager {
       CGEvent.tapEnable(tap: tap, enable: true)
     }
 
-    logger.info("Hotkey listener started (Hold \(self.activeBinding.displayName, privacy: .public))")
+    logger.info(
+      "Hotkey listener started (Hold \(self.activeBinding.displayName, privacy: .public), \(options == .listenOnly ? "listen-only" : "active", privacy: .public) tap)"
+    )
   }
 
   func stopListening() {
@@ -138,7 +150,9 @@ class HotKeyManager {
     type: CGEventType,
     event: CGEvent
   ) -> Unmanaged<CGEvent>? {
-    // Handle tap disabled event
+    // Handle tap disabled event. Timeout disabling only happens to active
+    // taps (the .defaultTap fallback path); passive taps never block event
+    // delivery so the watchdog has nothing to fire on. Kept for the fallback.
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
       if let tap = eventTap {
         CGEvent.tapEnable(tap: tap, enable: true)

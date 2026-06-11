@@ -25,7 +25,6 @@ class TranscriptionManager: ObservableObject {
 
   @Published private(set) var state: TranscriptionState = .idle
   @Published private(set) var isInitialized = false
-  @Published private(set) var audioLevel: Float = 0.0
   @Published private(set) var activeEngineName: String = ""
 
   private var audioRecorder: AudioRecorder?
@@ -46,14 +45,13 @@ class TranscriptionManager: ObservableObject {
 
     // Initialize components
     audioRecorder = AudioRecorder()
-    audioRecorder?.onLevelUpdate = { [weak self] level in
-      Task { @MainActor in
-        self?.audioLevel = level
-        NotificationCenter.default.post(
-          name: .audioLevelChanged,
-          object: nil,
-          userInfo: ["level": level]
-        )
+    // Write the level straight into the UI observable. The previous chain
+    // (Task -> @Published nobody read -> NotificationCenter + userInfo dict
+    // -> observer -> second main-queue hop) allocated on every update,
+    // ~12x/sec while recording.
+    audioRecorder?.onLevelUpdate = { level in
+      DispatchQueue.main.async {
+        AudioLevelMonitor.shared.level = level
       }
     }
     textInserter = TextInserter()
@@ -92,6 +90,7 @@ class TranscriptionManager: ObservableObject {
 
   /// Called when the user saves an API key or changes engine preference - re-evaluate.
   func onEngineConfigChanged() {
+    EngineResolver.invalidateCache()
     let engine = EngineResolver.resolve()
     activeEngineName = engine.displayName
     if EngineResolver.anyEngineAvailable {
@@ -191,20 +190,25 @@ class TranscriptionManager: ObservableObject {
         "[\(engine.displayName)] Transcription completed in \(elapsed, format: .fixed(precision: 2))s: \(text)"
       )
 
-      // Ensure processing indicator is visible for at least 0.5s
-      let minDisplayTime = 0.5
-      let remaining = minDisplayTime - elapsed
-      if remaining > 0 {
-        try? await Task.sleep(for: .seconds(remaining))
-      }
-
-      // Post-process and insert text with trailing space
+      // Post-process and insert text immediately - fast engines (Groq) often
+      // return in under 500ms and the user shouldn't wait on UI cosmetics.
       await MainActor.run {
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmedText.isEmpty {
           let processedText = TextPostProcessor.shared.process(trimmedText)
           self.textInserter?.insertText(processedText + " ")
         }
+      }
+
+      // Keep the processing indicator visible for at least 0.5s total so it
+      // doesn't flash, then return to idle.
+      let minDisplayTime = 0.5
+      let remaining = minDisplayTime - elapsed
+      if remaining > 0 {
+        try? await Task.sleep(for: .seconds(remaining))
+      }
+
+      await MainActor.run {
         self.setState(.idle)
       }
     } catch {

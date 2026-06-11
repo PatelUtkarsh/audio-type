@@ -68,14 +68,6 @@ class MenuBarController: NSObject, NSWindowDelegate {
       object: nil
     )
 
-    // Observe audio level changes
-    NotificationCenter.default.addObserver(
-      self,
-      selector: #selector(audioLevelDidChange),
-      name: .audioLevelChanged,
-      object: nil
-    )
-
     // Refresh the hotkey menu item when the binding changes from Settings.
     NotificationCenter.default.addObserver(
       self,
@@ -144,13 +136,6 @@ class MenuBarController: NSObject, NSWindowDelegate {
 
     DispatchQueue.main.async {
       self.updateUI(for: state)
-    }
-  }
-
-  @objc private func audioLevelDidChange(_ notification: Notification) {
-    guard let level = notification.userInfo?["level"] as? Float else { return }
-    DispatchQueue.main.async {
-      AudioLevelMonitor.shared.level = level
     }
   }
 
@@ -274,6 +259,13 @@ class MenuBarController: NSObject, NSWindowDelegate {
 
   private func hideRecordingIndicator() {
     recordingWindow?.orderOut(nil)
+    // Swap the hosted view back to the waveform branch. The hosting view is
+    // kept alive while hidden (rebuilding it leaked the SwiftUI graph), and
+    // leaving "Processing..." mounted means ThinkingDotsView's repeatForever
+    // animation stays live in the hidden window for the rest of the app's
+    // lifetime. The waveform branch only animates on level changes, and the
+    // level is 0 when idle.
+    AudioLevelMonitor.shared.overlayText = "Recording..."
   }
 
   @objc private func openSettings() {
@@ -308,11 +300,20 @@ class MenuBarController: NSObject, NSWindowDelegate {
     // Return to accessory mode when settings window closes (hide from dock)
     if (notification.object as? NSWindow) == settingsWindow {
       NSApp.setActivationPolicy(.accessory)
+      // Release the window and its SwiftUI graph instead of keeping them
+      // resident for the app's lifetime; openSettings rebuilds on demand.
+      // Deferred so we don't deallocate the window while AppKit is still
+      // inside its close machinery.
+      let closingWindow = settingsWindow
+      settingsWindow?.delegate = nil
+      DispatchQueue.main.async { [weak self] in
+        guard let self = self, self.settingsWindow == closingWindow else { return }
+        self.settingsWindow = nil
+      }
     }
   }
 }
 
 extension Notification.Name {
   static let transcriptionStateChanged = Notification.Name("transcriptionStateChanged")
-  static let audioLevelChanged = Notification.Name("audioLevelChanged")
 }

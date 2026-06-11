@@ -194,7 +194,7 @@ Resources/
 - **Resolver pattern**: `EngineResolver.resolve()` picks the engine at runtime based on config
 - **Singleton**: `TranscriptionManager.shared`, `TextPostProcessor.shared`, `AudioLevelMonitor.shared`
 - **`@MainActor`** on `TranscriptionManager` — all state mutations on main thread
-- **NotificationCenter** for decoupled state communication (`transcriptionStateChanged`, `audioLevelChanged`)
+- **NotificationCenter** for decoupled state communication (`transcriptionStateChanged`); audio levels write directly to `AudioLevelMonitor.shared` on the main queue
 - **`@Published` + ObservableObject** for SwiftUI reactivity
 - **Closures** for callbacks: `HotKeyManager(callback:)`, `audioRecorder.onLevelUpdate`
 - **`os.log` Logger** with subsystem `"com.audiotype"` — use per-class categories

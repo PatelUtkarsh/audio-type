@@ -62,10 +62,12 @@ class WhisperAPIEngine: TranscriptionEngine {
 
   func setApiKey(_ key: String) throws {
     try KeychainHelper.save(key: config.keychainKey, value: key)
+    EngineResolver.invalidateCache()
   }
 
   func clearApiKey() {
     KeychainHelper.delete(key: config.keychainKey)
+    EngineResolver.invalidateCache()
   }
 
   // MARK: - TranscriptionEngine

@@ -55,6 +55,38 @@ protocol TranscriptionEngine {
 
 /// Decides which concrete engine to use based on user preference and availability.
 enum EngineResolver {
+  // Key-presence cache. resolve() and anyEngineAvailable run on every hotkey
+  // press; without the cache each press paid up to four Keychain XPC
+  // round-trips. Every key write goes through the engines' setApiKey /
+  // clearApiKey, which call invalidateCache(). Accessed from the main thread
+  // only (TranscriptionManager, AppDelegate, Settings/Onboarding UI).
+  private static var cachedGroqConfigured: Bool?
+  private static var cachedOpenAIConfigured: Bool?
+
+  /// Platform capability; cannot change while the process runs.
+  private static let appleSpeechSupported = AppleSpeechEngine.isSupported
+
+  /// Drop cached key-presence. Called whenever an API key is saved or
+  /// cleared, and from TranscriptionManager.onEngineConfigChanged().
+  static func invalidateCache() {
+    cachedGroqConfigured = nil
+    cachedOpenAIConfigured = nil
+  }
+
+  private static var groqConfigured: Bool {
+    if let cached = cachedGroqConfigured { return cached }
+    let configured = GroqEngine.isConfigured
+    cachedGroqConfigured = configured
+    return configured
+  }
+
+  private static var openAIConfigured: Bool {
+    if let cached = cachedOpenAIConfigured { return cached }
+    let configured = OpenAIEngine.isConfigured
+    cachedOpenAIConfigured = configured
+    return configured
+  }
+
   /// Returns the engine to use for the current transcription request.
   static func resolve() -> TranscriptionEngine {
     let preference = TranscriptionEngineType.current
@@ -68,10 +100,10 @@ enum EngineResolver {
       return AppleSpeechEngine()
     case .auto:
       // Prefer Groq, then OpenAI, then Apple Speech.
-      if GroqEngine.isConfigured {
+      if groqConfigured {
         return GroqEngine()
       }
-      if OpenAIEngine.isConfigured {
+      if openAIConfigured {
         return OpenAIEngine()
       }
       return AppleSpeechEngine()
@@ -80,8 +112,8 @@ enum EngineResolver {
 
   /// `true` when at least one engine is usable.
   static var anyEngineAvailable: Bool {
-    GroqEngine.isConfigured
-      || OpenAIEngine.isConfigured
-      || AppleSpeechEngine.isSupported
+    groqConfigured
+      || openAIConfigured
+      || appleSpeechSupported
   }
 }
