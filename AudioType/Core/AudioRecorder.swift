@@ -129,6 +129,21 @@ class AudioRecorder {
     return samples.isEmpty ? nil : samples
   }
 
+  /// Atomically take everything captured so far and keep recording. Used by
+  /// live typing to send chunks for transcription mid-session. The buffer is
+  /// replaced (not cleared) so the drained array transfers without a copy,
+  /// and a fresh capacity reservation keeps the steady-state append cheap.
+  func drainChunk() -> [Float] {
+    guard isRecording else { return [] }
+
+    bufferLock.lock()
+    defer { bufferLock.unlock() }
+    let samples = audioBuffer
+    audioBuffer = []
+    audioBuffer.reserveCapacity(Int(Self.targetSampleRate * 30))
+    return samples
+  }
+
   private func processAudioBuffer(
     _ buffer: AVAudioPCMBuffer, converter: AVAudioConverter?, targetFormat: AVAudioFormat
   ) {
