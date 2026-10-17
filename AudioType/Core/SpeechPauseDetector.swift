@@ -10,9 +10,13 @@ import Foundation
 ///
 /// Policy: cut after a natural pause (level below `silenceThreshold` for at
 /// least `pauseDuration`) once the chunk carries speech and is at least
-/// `minChunkDuration` long. Force a cut at `maxChunkDuration` so an unbroken
-/// monologue still streams. Chunks with no speech at all never cut; leading
-/// silence (key held, user thinking) just accrues until speech starts.
+/// `minChunkDuration` long. Shorter pauses are often inside a sentence (a
+/// breath, a hesitation), so a normal chunk needs a long pause; a chunk past
+/// `longChunkDuration` cuts at a shorter one so a monologue still streams.
+/// Past `maxChunkDuration` a short dip between words is enough, and
+/// `hardMaxChunkDuration` forces the cut. Chunks with no speech at all never
+/// cut; leading silence (key held, user thinking) just accrues until speech
+/// starts.
 struct SpeechPauseDetector {
 
   /// Normalized level below which audio counts as a pause. Speech sits at
@@ -20,16 +24,25 @@ struct SpeechPauseDetector {
   /// noise stays well under this.
   var silenceThreshold: Float = 0.12
 
-  /// How long the level must stay below the threshold to count as a pause.
-  var pauseDuration: TimeInterval = 0.7
+  /// How long the level must stay below the threshold to cut a chunk of
+  /// normal length.
+  var pauseDuration: TimeInterval = 1.0
 
-  /// Minimum chunk length before a pause may cut, so we don't spray tiny
-  /// fragments at the API.
-  var minChunkDuration: TimeInterval = 1.5
+  /// Past this chunk length, `longChunkPauseDuration` is enough to cut.
+  var longChunkDuration: TimeInterval = 6
+  var longChunkPauseDuration: TimeInterval = 0.7
 
-  /// Hard cut past this length even without a pause. Cutting mid-speech can
-  /// split a word, so this is deliberately generous.
+  /// Minimum chunk length before a pause may cut. Short chunks give the
+  /// model little context and cost a full request each (Groq bills at
+  /// least 10s per request).
+  var minChunkDuration: TimeInterval = 3
+
+  /// Past this length, cut at the first dip of `shortDipDuration`.
   var maxChunkDuration: TimeInterval = 15
+  var shortDipDuration: TimeInterval = 0.25
+
+  /// Cut here even without a dip. This can split a word.
+  var hardMaxChunkDuration: TimeInterval = 17
 
   /// Whether the current (uncut) chunk has carried any speech. The session
   /// owner uses this to skip transcribing a silence-only final tail.
@@ -78,20 +91,18 @@ struct SpeechPauseDetector {
     }
 
     let chunkDuration = time - start
+    let pause = silenceStart.map { time - $0 } ?? 0
+    let requiredPause =
+      chunkDuration >= longChunkDuration ? longChunkPauseDuration : pauseDuration
 
-    if chunkDuration >= maxChunkDuration {
-      resetChunk(at: time)
-      return .cut
-    }
+    let shouldCut =
+      chunkDuration >= hardMaxChunkDuration
+      || (chunkDuration >= maxChunkDuration && pause >= shortDipDuration)
+      || (chunkDuration >= minChunkDuration && pause >= requiredPause)
+    guard shouldCut else { return .keep }
 
-    if let pauseBegan = silenceStart,
-      time - pauseBegan >= pauseDuration,
-      chunkDuration >= minChunkDuration {
-      resetChunk(at: time)
-      return .cut
-    }
-
-    return .keep
+    resetChunk(at: time)
+    return .cut
   }
 
   private mutating func resetChunk(at time: TimeInterval) {
