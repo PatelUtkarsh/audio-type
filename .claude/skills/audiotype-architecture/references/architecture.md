@@ -66,11 +66,11 @@ A native macOS application providing instant voice-to-text functionality.
 Important behaviours:
 
 - **Engine pinning:** `EngineResolver.resolve()` is called once at `startRecording`; the same engine instance is reused for the matching `transcribe` call. This keeps Keychain/availability checks off the post-stop hot path and prevents the engine identity from changing mid-recording if the user edits settings.
-- **Chunk tasks:** each chunk (Live Typing cut or final tail) is one task that waits for the chunk before it, then transcribes with `TranscriptionContext.precedingText` (from `LiveChunkJoiner.prompt()`) and types the result. The tasks are cancelled, and a `sessionID` check makes old work inert, when a new recording starts or a recording is cancelled, so stale text never lands in the user's new context.
+- **Chunk tasks:** each chunk (Live Typing cut or final tail) is one task. It waits up to 1.5 s for the chunk before it (so a slow request does not hold up every later one), transcribes with `TranscriptionContext.precedingText` (from `LiveChunkJoiner.prompt()`), then waits for the previous task and types the result, so text lands in spoken order. The tasks are cancelled, and a `sessionID` check makes old work inert, when a new recording starts or a recording is cancelled, so stale text never lands in the user's new context.
 - **Minimum 0.5 s processing indicator:** if transcription returns faster, the manager sleeps the remainder so the UI flash isn't jarring.
 - **Closing the dictation:** a period still held back by `LiveChunkJoiner` and one trailing space are typed when the session ends.
 - **Errors:** the first chunk failure of a session is shown when the session ends, with its real reason (HTTP errors show only the status code), for 5 s. An error state never blocks a new recording. An empty Apple Speech result is not an error.
-- **Discarded holds:** a hotkey hold shorter than 0.3 s, or one that `HotKeyManager` marks as a shortcut, is discarded without transcription unless Live Typing already sent a chunk.
+- **Discarded holds:** a hotkey hold shorter than 0.3 s, or one that `HotKeyManager` marks as a shortcut and that has less than 1 s of audio above the pause level, is discarded without transcription unless Live Typing already sent a chunk.
 - **Engine-config notifications:** `onEngineConfigChanged()` (alias `onApiKeyChanged()`) is called by Settings/Onboarding to re-resolve the active engine and clear/raise the "no engine available" error. It does not change the state of a session in progress.
 
 ### 1. HotKey Manager
@@ -83,7 +83,7 @@ Important behaviours:
 
 **Default Hotkey:** Hold `fn` key (configurable, see `HotKeyBinding`)
 
-The tap fires on `flagsChanged` for the bound key. `HotKeyHoldState` (pure, unit-tested) turns flag changes into `.keyDown` / `.keyUp(otherKeyPressed:)` / `.cancel`. A listen-only tap also receives `keyDown`: a key pressed within 1 s of the press marks the hold as a shortcut (fn+Delete, fn+arrow), and `TranscriptionManager` discards it. Key events that AudioType posts carry a `SyntheticKeyEvent` mark and do not count. A binding change during a hold sends `.cancel`.
+The tap fires on `flagsChanged` for the bound key. `HotKeyHoldState` (pure, unit-tested) turns flag changes into `.keyDown` / `.keyUp(otherKeyPressed:)` / `.cancel`. A listen-only tap also receives `keyDown`: a key pressed within 1 s of the press (not autorepeat) marks the hold as a shortcut (fn+Delete, fn+arrow), and `TranscriptionManager` discards it when it has little speech. Key events that AudioType posts carry a `SyntheticKeyEvent` mark and do not count. A binding change during a hold sends `.cancel`.
 
 **States:**
 - Idle -> Recording (on key down)
@@ -126,6 +126,7 @@ The app uses a **protocol-based engine abstraction** with a shared base class to
 protocol TranscriptionEngine {
     var displayName: String { get }
     var isAvailable: Bool { get }
+    var supportsPrompt: Bool { get }  // sends context.precedingText to the model
     func transcribe(samples: [Float], context: TranscriptionContext) async throws -> String
 }
 

@@ -91,7 +91,7 @@ TranscriptionEngine (protocol)
 | **OpenAI Whisper** | Always use OpenAI (fails if no key) |
 | **Apple Speech** | Always use on-device recognition |
 
-All engines implement a single method: `transcribe(samples: [Float], context: TranscriptionContext) async throws -> String` — accepting 16 kHz mono Float32 PCM samples from `AudioRecorder`. `TranscriptionContext` carries `precedingText` (the end of the text already typed in this dictation; cloud engines send it as the `prompt` form field) and `isPartial` (the audio is one Live Typing chunk; Apple Speech then skips `addsPunctuation`, because it takes no prompt).
+All engines implement a single method: `transcribe(samples: [Float], context: TranscriptionContext) async throws -> String` — accepting 16 kHz mono Float32 PCM samples from `AudioRecorder`. `TranscriptionContext` carries `precedingText` (the end of the text already typed in this dictation; cloud engines send it as the `prompt` form field) and `isPartial` (the audio is one Live Typing chunk; Apple Speech then skips `addsPunctuation`, because it takes no prompt). Engines also report `supportsPrompt`.
 
 ### Data Flow
 
@@ -113,9 +113,9 @@ fn key released → TranscriptionManager.stopRecordingAndTranscribe()     │
               → Groq API)         → OpenAI API)       RecognitionRequest)
                      ↓                  ↓                     ↓
                               transcribed text
-                (chunks run one after another: each request sends
-                 the text before it as its prompt; text lands in
-                 spoken order)
+                (each request waits up to 1.5s for the chunk before
+                 it and sends the text so far as its prompt; text
+                 lands in spoken order)
                                     ↓
            LiveChunkJoiner (holds back a chunk-end "." until the next
                             chunk shows whether the sentence goes on)
@@ -129,9 +129,12 @@ fn key released → TranscriptionManager.stopRecordingAndTranscribe()     │
 
 Live Typing (chunked transcription while the key is held) is off by default and toggleable in Settings → General. With it off, the session is a single final chunk, the pre-existing behavior.
 
-A model that gets a chunk alone ends it with "." even when the speaker only paused. Three parts prevent the wrong periods: `SpeechPauseDetector` cuts only at long pauses (1.0s, or 0.7s after a 6s chunk; minimum chunk 3s; at 15s it waits for a short dip; hard cut at 17s); each request sends the preceding text as its prompt; `LiveChunkJoiner` holds back the final "." or "..." of a non-final chunk and drops it when the next chunk starts lowercase or with a digit.
+A model that gets a chunk alone ends it with "." even when the speaker only paused. Three parts prevent the wrong periods:
+- `SpeechPauseDetector` cuts only at long pauses (1.0s, or 0.7s after a 6s chunk; minimum chunk 3s; at 15s it waits for a short dip; hard cut at 17s).
+- Each request sends the preceding text, without a held period, as its prompt (engines with `supportsPrompt`). With it, whisper-large-v3 continues a sentence in lowercase and keeps the capital after a real sentence end.
+- `LiveChunkJoiner` holds back the final "." or "..." of a non-final chunk. It drops the period when the next chunk starts lowercase or with a digit, or when the held chunk ends with a word that cannot end an English sentence ("and", "the"). A prompt without a final period also makes the model leave out the period at the end of its own chunk, so such a chunk gets a held period too. A chunk that starts with "I" or a name still gets the period: only grammar could tell.
 
-The hotkey ignores shortcuts: with a listen-only tap, a key pressed within 1s of the press (fn+Delete, fn+arrow) or a hold shorter than 0.3s discards the recording, unless Live Typing already sent a chunk. Key events that AudioType posts are marked (`SyntheticKeyEvent`) so they do not count.
+The hotkey ignores shortcuts: with a listen-only tap, a key pressed within 1s of the press (fn+Delete, fn+arrow; autorepeat does not count) discards the recording when it has less than 1s of audio above the pause level. A hold shorter than 0.3s is discarded too. Neither applies after Live Typing sent a chunk. Key events that AudioType posts are marked (`SyntheticKeyEvent`) so they do not count.
 
 ### Permission Requirements
 
@@ -229,7 +232,7 @@ Resources/
 
 ### Adding a Non-Whisper Engine
 1. Create a new class conforming to `TranscriptionEngine` in `AudioType/Core/`
-2. Implement `displayName`, `isAvailable`, and `transcribe(samples:context:)`
+2. Implement `displayName`, `isAvailable`, `supportsPrompt`, and `transcribe(samples:context:)`
 3. Add a case to `TranscriptionEngineType` and update `EngineResolver.resolve()`
 4. Update `EngineResolver.anyEngineAvailable` if the engine has standalone availability
 5. Add any needed permissions to `Permissions.swift` and `Info.plist`

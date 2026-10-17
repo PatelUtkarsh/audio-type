@@ -56,6 +56,7 @@ Protocol + resolver in `Core/TranscriptionEngine.swift`:
 protocol TranscriptionEngine {
     var displayName: String { get }
     var isAvailable: Bool { get }
+    var supportsPrompt: Bool { get }
     func transcribe(samples: [Float], context: TranscriptionContext) async throws -> String
 }
 ```
