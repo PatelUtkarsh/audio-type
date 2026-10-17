@@ -100,6 +100,10 @@ class AppleSpeechEngine: TranscriptionEngine {
     // Build an audio buffer request and feed the recorded samples
     let request = SFSpeechAudioBufferRecognitionRequest()
     request.shouldReportPartialResults = false
+    // Punctuate a whole dictation. A Live Typing part stays unpunctuated:
+    // Apple Speech takes no prompt, so a period at each pause cut could not
+    // be told apart from a real sentence end.
+    request.addsPunctuation = !context.isPartial
     if recognizer.supportsOnDeviceRecognition {
       request.requiresOnDeviceRecognition = true
     }
