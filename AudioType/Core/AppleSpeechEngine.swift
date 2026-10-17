@@ -121,6 +121,14 @@ class AppleSpeechEngine: TranscriptionEngine {
 
         if let error = error {
           hasResumed = true
+          // Silent audio comes back as an error ("No speech detected"), not
+          // as an empty result. Report it as no result, which is not a
+          // failure.
+          let nsError = error as NSError
+          if nsError.domain == "kAFAssistantErrorDomain" && nsError.code == 1110 {
+            continuation.resume(throwing: AppleSpeechError.noResult)
+            return
+          }
           let msg = error.localizedDescription
           continuation.resume(
             throwing: AppleSpeechError.recognitionFailed(msg)
