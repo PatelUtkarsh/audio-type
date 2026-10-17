@@ -188,6 +188,15 @@ class TranscriptionManager: ObservableObject {
   /// When the current recording started, for `minimumHoldDuration`.
   private var recordingStartTime: TimeInterval = 0
 
+  /// A shortcut hold (another key pressed with the hotkey) is kept as a
+  /// dictation when it has at least this much audio above the pause level,
+  /// so a stray key does not lose speech. Key clicks alone stay under it.
+  private static let minimumVoicedDuration: TimeInterval = 1.0
+
+  /// Time with a level above the pause threshold in the current recording.
+  private var voicedDuration: TimeInterval = 0
+  private var lastLevelTime: TimeInterval?
+
   /// Engine resolved at recording start and reused for the matching
   /// transcription. Keeps Keychain / availability checks out of the
   /// post-stop hot path and ensures the engine identity doesn't change
@@ -225,6 +234,9 @@ class TranscriptionManager: ObservableObject {
 
     liveTypingActive = LiveTypingSetting.isEnabled
     sessionChunkCount = 0
+    finishedChunkCount = 0
+    voicedDuration = 0
+    lastLevelTime = nil
     if liveTypingActive {
       pauseDetector.begin(at: ProcessInfo.processInfo.systemUptime)
     }
@@ -244,11 +256,20 @@ class TranscriptionManager: ObservableObject {
     }
   }
 
-  /// Level updates arrive on the main queue ~12x/sec while recording. Feed
-  /// the pause detector and cut a live chunk when it says so.
+  /// Level updates arrive on the main queue ~12x/sec while recording. Count
+  /// voiced time, feed the pause detector and cut a live chunk when it says
+  /// so.
   private func handleLevel(_ level: Float) {
-    guard state == .recording, liveTypingActive else { return }
-    if pauseDetector.update(level: level, at: ProcessInfo.processInfo.systemUptime) == .cut {
+    guard state == .recording else { return }
+    let now = ProcessInfo.processInfo.systemUptime
+    if level >= pauseDetector.silenceThreshold, let last = lastLevelTime {
+      // One update covers one tap buffer (~0.1s); cap a gap from a stall.
+      voicedDuration += min(now - last, 0.25)
+    }
+    lastLevelTime = now
+
+    guard liveTypingActive else { return }
+    if pauseDetector.update(level: level, at: now) == .cut {
       emitLiveChunk()
     }
   }
@@ -271,11 +292,13 @@ class TranscriptionManager: ObservableObject {
     // A shortcut such as fn+Delete or fn+arrow, or a short tap of the
     // hotkey, is not a dictation: models can return text such as "Thank
     // you." for near-silent audio, and it would be typed. Discard it,
-    // unless Live Typing already sent part of the session.
+    // unless Live Typing already sent part of the session or the hold has
+    // real speech in it.
     let heldFor = ProcessInfo.processInfo.systemUptime - recordingStartTime
-    if sessionChunkCount == 0 && (otherKeyPressed || heldFor < Self.minimumHoldDuration) {
+    let isShortcut = otherKeyPressed && voicedDuration < Self.minimumVoicedDuration
+    if sessionChunkCount == 0 && (isShortcut || heldFor < Self.minimumHoldDuration) {
       cancelRecording(
-        reason: otherKeyPressed ? "another key was pressed with the hotkey" : "the hotkey was only tapped")
+        reason: isShortcut ? "another key was pressed with the hotkey" : "the hotkey was only tapped")
       return
     }
 
@@ -315,12 +338,20 @@ class TranscriptionManager: ObservableObject {
     finishSession()
   }
 
-  /// Transcribe one chunk and type its text. Chunks run one after another:
-  /// each request waits for the chunk before it, so it can send the text so
-  /// far as its prompt (the model then continues the sentence instead of
-  /// starting a new one), and text always lands in spoken order. A cut
-  /// needs at least 3s of audio, so the previous request has usually
-  /// finished by then and the wait costs little.
+  /// How long a chunk waits for the chunk before it, so that chunk's text
+  /// can go into the prompt. A cut needs at least 3s of audio, so the
+  /// previous request has usually finished long before. The wait is
+  /// bounded so that one slow request (bad network) does not hold up every
+  /// later one.
+  private static let promptWait: Duration = .milliseconds(1_500)
+
+  /// Chunks of the current session that are typed (or failed), in order.
+  private var finishedChunkCount = 0
+
+  /// Transcribe one chunk and type its text. The request waits (briefly)
+  /// for the chunk before it and sends the text so far as its prompt, so
+  /// the model continues the sentence instead of starting a new one. Text
+  /// is always typed in spoken order.
   private func enqueueChunk(samples: [Float], engine: TranscriptionEngine, isFinal: Bool) {
     sessionChunkCount += 1
     let chunkIndex = sessionChunkCount
@@ -330,29 +361,52 @@ class TranscriptionManager: ObservableObject {
     let previous = chunkTasks.last
 
     let task = Task { [weak self] in
-      await previous?.value
-      guard !Task.isCancelled, let self = self, self.sessionID == session else { return }
+      guard let self = self else { return }
+      await self.waitForChunk(chunkIndex - 1, of: session, upTo: Self.promptWait)
+      guard !Task.isCancelled, self.sessionID == session else { return }
       let context = TranscriptionContext(
         precedingText: self.chunkJoiner.prompt(), isPartial: isPartial)
       let startTime = ProcessInfo.processInfo.systemUptime
+      let result: Result<String, Error>
       do {
         let text = try await engine.transcribe(samples: samples, context: context)
         let elapsed = ProcessInfo.processInfo.systemUptime - startTime
         logger.info(
           "[\(engine.displayName)] Chunk \(chunkIndex) transcribed in \(elapsed, format: .fixed(precision: 2))s: \(text)"
         )
-        guard !Task.isCancelled, self.sessionID == session else { return }
-        await self.insertChunk(text, isFinal: isFinal)
+        result = .success(text)
       } catch {
         logger.error(
           "[\(engine.displayName)] Chunk \(chunkIndex) failed: \(error.localizedDescription)"
         )
-        guard !Task.isCancelled, self.sessionID == session else { return }
+        result = .failure(error)
+      }
+
+      // Type in spoken order.
+      await previous?.value
+      guard !Task.isCancelled, self.sessionID == session else { return }
+      switch result {
+      case .success(let text):
+        await self.insertChunk(text, isFinal: isFinal)
+      case .failure(let error):
         // The session keeps going; finishSession reports the failure.
         self.recordChunkFailure(error)
       }
+      if self.sessionID == session {
+        self.finishedChunkCount = chunkIndex
+      }
     }
     chunkTasks.append(task)
+  }
+
+  /// Returns when chunk `index` of `session` is typed (or failed), when the
+  /// session ends, or after `limit`.
+  private func waitForChunk(_ index: Int, of session: Int, upTo limit: Duration) async {
+    let deadline = ContinuousClock.now + limit
+    while finishedChunkCount < index, sessionID == session, !Task.isCancelled,
+      ContinuousClock.now < deadline {
+      try? await Task.sleep(for: .milliseconds(50))
+    }
   }
 
   private func recordChunkFailure(_ error: Error) {

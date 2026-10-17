@@ -42,8 +42,9 @@ struct HotKeyHoldState {
   }
 
   /// A key other than the hotkey went down (not one AudioType typed).
-  mutating func otherKeyDown(at time: TimeInterval) {
-    if isHeld && time - pressTime < Self.shortcutWindow {
+  /// Autorepeat does not count: it comes from a key held before the press.
+  mutating func otherKeyDown(at time: TimeInterval, isAutorepeat: Bool = false) {
+    if isHeld && !isAutorepeat && time - pressTime < Self.shortcutWindow {
       otherKeyPressed = true
     }
   }
@@ -221,7 +222,8 @@ class HotKeyManager {
     if type == .keyDown {
       // Keys that AudioType itself types (Live Typing) are not the user's.
       if !SyntheticKeyEvent.isMarked(event) {
-        hold.otherKeyDown(at: now)
+        let isAutorepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+        hold.otherKeyDown(at: now, isAutorepeat: isAutorepeat)
       }
       return Unmanaged.passUnretained(event)
     }

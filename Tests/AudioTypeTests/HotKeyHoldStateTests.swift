@@ -30,6 +30,14 @@ final class HotKeyHoldStateTests: XCTestCase {
     XCTAssertEqual(hold.bindingFlagChanged(isDown: false, at: 5), .keyUp(otherKeyPressed: false))
   }
 
+  func testAutorepeatOfAKeyHeldBeforeThePressIsNotAShortcut() {
+    var hold = HotKeyHoldState()
+    // Delete was already held down; its autorepeat continues after fn.
+    _ = hold.bindingFlagChanged(isDown: true, at: 0)
+    hold.otherKeyDown(at: 0.1, isAutorepeat: true)
+    XCTAssertEqual(hold.bindingFlagChanged(isDown: false, at: 3), .keyUp(otherKeyPressed: false))
+  }
+
   func testOtherKeyWithoutAHoldIsIgnored() {
     var hold = HotKeyHoldState()
     hold.otherKeyDown(at: 0)
