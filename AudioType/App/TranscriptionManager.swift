@@ -65,6 +65,9 @@ class TranscriptionManager: ObservableObject {
   /// adds and supplies the prompt for the next chunk.
   private var chunkJoiner = LiveChunkJoiner()
 
+  /// Reason of the session's first failed chunk, shown when it ends.
+  private var sessionFailure: String?
+
   /// Whether the last character AudioType typed was whitespace. When it
   /// wasn't, the next chunk gets one separator space typed up front as its
   /// own keystroke - editors with smart paste can strip whitespace at the
@@ -188,6 +191,7 @@ class TranscriptionManager: ObservableObject {
     cancelChunkTasks()
     sessionID += 1
     chunkJoiner = LiveChunkJoiner()
+    sessionFailure = nil
 
     // Resolve the engine once, up front. The whole session reuses it.
     let engine = EngineResolver.resolve()
@@ -306,20 +310,30 @@ class TranscriptionManager: ObservableObject {
         logger.error(
           "[\(engine.displayName)] Chunk \(chunkIndex) failed: \(error.localizedDescription)"
         )
-        guard !Task.isCancelled, isFinal, self.sessionID == session else { return }
-        // Non-final chunk failures drop that fragment and the session keeps
-        // going; a final failure surfaces like the old single-shot path.
-        guard case .processing = self.state else { return }
-        self.setState(.error("Transcription failed"))
-        Task {
-          try? await Task.sleep(for: .seconds(2))
-          if case .error = self.state {
-            self.setState(.idle)
-          }
-        }
+        guard !Task.isCancelled, self.sessionID == session else { return }
+        // The session keeps going; finishSession reports the failure.
+        self.recordChunkFailure(error)
       }
     }
     chunkTasks.append(task)
+  }
+
+  private func recordChunkFailure(_ error: Error) {
+    // An empty Apple Speech result is not a failure: the Whisper engines
+    // return "" for the same audio.
+    if case .noResult? = error as? AppleSpeechError { return }
+    if sessionFailure == nil {
+      sessionFailure = Self.userMessage(for: error)
+    }
+  }
+
+  /// A short reason for the menu bar. The full error is in the log.
+  private static func userMessage(for error: Error) -> String {
+    // The HTTP error body can be long JSON; the status code is enough here.
+    if case .httpError(let code, _)? = error as? WhisperAPIError {
+      return "API error (HTTP \(code))"
+    }
+    return (error as? LocalizedError)?.errorDescription ?? "Transcription failed"
   }
 
   private func cancelChunkTasks() {
@@ -360,11 +374,15 @@ class TranscriptionManager: ObservableObject {
       if remaining > 0 {
         try? await Task.sleep(for: .seconds(remaining))
       }
-      guard let self = self, self.sessionID == session else { return }
-      // Only the processing state transitions to idle here; an error set by
-      // the final chunk is left alone.
-      if case .processing = self.state {
-        self.closeDictation()
+      guard let self = self, self.sessionID == session, case .processing = self.state else {
+        return
+      }
+      self.closeDictation()
+      if let failure = self.sessionFailure {
+        // Say so when other chunks were typed: the text has a gap.
+        self.showError(
+          self.chunkJoiner.hasText ? "Some speech was not typed: \(failure)" : failure)
+      } else {
         self.setState(.idle)
       }
     }
