@@ -387,7 +387,8 @@ class TranscriptionManager: ObservableObject {
       guard !Task.isCancelled, self.sessionID == session else { return }
       switch result {
       case .success(let text):
-        await self.insertChunk(text, isFinal: isFinal)
+        let sentWithPrompt = engine.supportsPrompt && context.precedingText != nil
+        await self.insertChunk(text, isFinal: isFinal, sentWithPrompt: sentWithPrompt)
       case .failure(let error):
         // The session keeps going; finishSession reports the failure.
         self.recordChunkFailure(error)
@@ -446,8 +447,10 @@ class TranscriptionManager: ObservableObject {
 
   /// Post-process and type one chunk's text. Runs on the main actor, in
   /// chunk order.
-  private func insertChunk(_ text: String, isFinal: Bool) async {
-    guard let insertion = chunkJoiner.append(text, isFinal: isFinal) else { return }
+  private func insertChunk(_ text: String, isFinal: Bool, sentWithPrompt: Bool) async {
+    guard
+      let insertion = chunkJoiner.append(text, isFinal: isFinal, sentWithPrompt: sentWithPrompt)
+    else { return }
     let processed = TextPostProcessor.shared.process(
       insertion.text, capitalizeFirst: insertion.startsSentence
     )

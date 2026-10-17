@@ -39,7 +39,13 @@ struct LiveChunkJoiner {
   /// Accepts the model output for the next chunk. Returns nil when the
   /// chunk adds nothing: no letters or digits, or only an echo of the
   /// prompt (models can repeat the prompt for near-silent audio).
-  mutating func append(_ rawText: String, isFinal: Bool) -> Insertion? {
+  ///
+  /// `sentWithPrompt`: the engine received `prompt()` with this chunk. A
+  /// prompt without a final period makes Whisper leave out the period at
+  /// the end of this chunk too (seen with whisper-large-v3 on Groq), so an
+  /// unpunctuated end gets a held period that the next chunk, or the end of
+  /// the session, decides on like a real one.
+  mutating func append(_ rawText: String, isFinal: Bool, sentWithPrompt: Bool = false) -> Insertion? {
     let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
     guard text.contains(where: { $0.isLetter || $0.isNumber }), !isEcho(text) else {
       return nil
@@ -54,6 +60,8 @@ struct LiveChunkJoiner {
     if !isFinal, let period = Self.heldPeriod(at: text) {
       body = String(text.dropLast(period.count)).trimmingCharacters(in: .whitespaces)
       heldTerminator = period
+    } else if sentWithPrompt, let last = text.last, last.isLetter || last.isNumber {
+      heldTerminator = "."
     }
 
     if hasText {

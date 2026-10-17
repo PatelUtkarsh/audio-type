@@ -101,6 +101,52 @@ final class LiveChunkJoinerTests: XCTestCase {
     XCTAssertFalse(joiner.hasText)
   }
 
+  // MARK: - Recorded whisper-large-v3 output (Groq, synthetic speech)
+
+  func testRecordedPauseAfterToBecomesOneSentence() throws {
+    var joiner = LiveChunkJoiner()
+    _ = joiner.append("Yesterday after work, I really wanted to.", isFinal: false)
+
+    // Sent with the prompt "Yesterday after work, I really wanted to".
+    let next = try XCTUnwrap(
+      joiner.append("go to the store and buy some milk.", isFinal: true, sentWithPrompt: true))
+    XCTAssertEqual(next.terminator, "")
+    XCTAssertEqual(joiner.finish(), "")
+  }
+
+  func testRecordedSentenceEndKeepsBothPeriods() throws {
+    var joiner = LiveChunkJoiner()
+    _ = joiner.append("Yesterday, I finished the report and sent it to the team.", isFinal: false)
+
+    // With a prompt that has no final period, the model left out its own.
+    let next = try XCTUnwrap(
+      joiner.append("Then I went home and slept", isFinal: true, sentWithPrompt: true))
+    XCTAssertEqual(next.terminator, ".")
+    XCTAssertEqual(joiner.finish(), ".")
+  }
+
+  // MARK: - Missing period after a prompt
+
+  func testUnpunctuatedChunkSentWithPromptLetsTheNextChunkDecide() throws {
+    var joiner = LiveChunkJoiner()
+    _ = joiner.append("We need to review.", isFinal: false)
+    _ = joiner.append("the quarterly numbers", isFinal: false, sentWithPrompt: true)
+
+    let last = try XCTUnwrap(joiner.append("with the team", isFinal: true, sentWithPrompt: true))
+    XCTAssertEqual(last.terminator, "")
+    XCTAssertEqual(joiner.finish(), ".")
+  }
+
+  func testUnpunctuatedChunksWithoutPromptGetNoPeriods() throws {
+    var joiner = LiveChunkJoiner()
+    // Apple Speech: no prompt and no punctuation in Live Typing chunks.
+    _ = joiner.append("I want to", isFinal: false)
+
+    let next = try XCTUnwrap(joiner.append("Go to the store", isFinal: true))
+    XCTAssertEqual(next.terminator, "")
+    XCTAssertEqual(joiner.finish(), "")
+  }
+
   // MARK: - Prompt context for the next request
 
   func testPromptIsNilBeforeAnyText() {

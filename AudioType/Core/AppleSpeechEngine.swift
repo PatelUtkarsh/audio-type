@@ -40,6 +40,9 @@ class AppleSpeechEngine: TranscriptionEngine {
 
   var displayName: String { "Apple Speech" }
 
+  /// SFSpeechRecognizer has no prompt; `context.precedingText` is ignored.
+  var supportsPrompt: Bool { false }
+
   var isAvailable: Bool {
     guard let recognizer = SFSpeechRecognizer() else { return false }
     return recognizer.isAvailable

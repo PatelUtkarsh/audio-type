@@ -41,6 +41,8 @@ class WhisperAPIEngine: TranscriptionEngine {
 
   var isAvailable: Bool { apiKey != nil && !apiKey!.isEmpty }
 
+  var supportsPrompt: Bool { true }
+
   private var logger: Logger {
     Logger(
       subsystem: "com.audiotype",

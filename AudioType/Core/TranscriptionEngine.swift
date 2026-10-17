@@ -61,6 +61,9 @@ protocol TranscriptionEngine {
   /// Whether this engine is ready to accept transcription requests right now.
   var isAvailable: Bool { get }
 
+  /// Whether `transcribe` sends `context.precedingText` to the model.
+  var supportsPrompt: Bool { get }
+
   /// Transcribe 16 kHz mono Float32 PCM samples into text.
   func transcribe(samples: [Float], context: TranscriptionContext) async throws -> String
 }
