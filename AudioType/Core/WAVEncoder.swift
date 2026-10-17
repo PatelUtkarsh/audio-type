@@ -61,8 +61,17 @@ class WhisperAPIEngine: TranscriptionEngine {
   }
 
   func setApiKey(_ key: String) throws {
-    try KeychainHelper.save(key: config.keychainKey, value: key)
+    try KeychainHelper.save(key: config.keychainKey, value: Self.normalizedApiKey(key))
     EngineResolver.invalidateCache()
+  }
+
+  /// The key to store, without surrounding whitespace: a key pasted with a
+  /// trailing newline breaks the Authorization header. Throws when nothing
+  /// is left, so Settings never reports an empty key as configured.
+  static func normalizedApiKey(_ key: String) throws -> String {
+    let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { throw WhisperAPIError.emptyApiKey }
+    return trimmed
   }
 
   func clearApiKey() {
@@ -182,6 +191,7 @@ private struct WhisperTranscriptionResponse: Decodable {
 
 enum WhisperAPIError: Error, LocalizedError {
   case apiKeyNotConfigured(String)
+  case emptyApiKey
   case invalidURL
   case networkError(String)
   case httpError(Int, String)
@@ -193,6 +203,8 @@ enum WhisperAPIError: Error, LocalizedError {
     switch self {
     case .apiKeyNotConfigured(let name):
       return "\(name) API key not configured. Open Settings to add your key."
+    case .emptyApiKey:
+      return "The API key is empty."
     case .invalidURL:
       return "Invalid API endpoint URL."
     case .networkError(let message):

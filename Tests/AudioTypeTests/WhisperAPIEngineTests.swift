@@ -93,6 +93,16 @@ final class WhisperAPIEngineTests: XCTestCase {
     XCTAssertFalse(try bodyText(prompt: nil).contains("name=\"prompt\""))
   }
 
+  // MARK: - API key input
+
+  func testPastedApiKeyIsTrimmed() throws {
+    XCTAssertEqual(try WhisperAPIEngine.normalizedApiKey("  gsk_abc123\n"), "gsk_abc123")
+  }
+
+  func testBlankApiKeyIsRejected() {
+    XCTAssertThrowsError(try WhisperAPIEngine.normalizedApiKey(" \n\t"))
+  }
+
   // MARK: - Rate limit retry
 
   func testShortRateLimitIsRetriedOnce() async throws {

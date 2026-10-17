@@ -142,7 +142,7 @@ class GroqEngine: WhisperAPIEngine {
   }
 
   static func setApiKey(_ key: String) throws {
-    try KeychainHelper.save(key: groqConfig.keychainKey, value: key)
+    try KeychainHelper.save(key: groqConfig.keychainKey, value: normalizedApiKey(key))
     EngineResolver.invalidateCache()
   }
 
