@@ -158,10 +158,19 @@ class TranscriptionManager: ObservableObject {
     switch event {
     case .keyDown:
       startRecording()
-    case .keyUp:
-      stopRecordingAndTranscribe()
+    case .keyUp(let otherKeyPressed):
+      stopRecordingAndTranscribe(otherKeyPressed: otherKeyPressed)
+    case .cancel:
+      cancelRecording(reason: "the hotkey binding changed")
     }
   }
+
+  /// A release this soon after the press, with no Live Typing chunk sent,
+  /// is a tap of the hotkey, not a dictation.
+  private static let minimumHoldDuration: TimeInterval = 0.3
+
+  /// When the current recording started, for `minimumHoldDuration`.
+  private var recordingStartTime: TimeInterval = 0
 
   /// Engine resolved at recording start and reused for the matching
   /// transcription. Keeps Keychain / availability checks out of the
@@ -206,6 +215,7 @@ class TranscriptionManager: ObservableObject {
 
     do {
       try audioRecorder?.startRecording()
+      recordingStartTime = ProcessInfo.processInfo.systemUptime
       setState(.recording)
       logger.info(
         "Recording started with engine: \(engine.displayName) (live typing \(self.liveTypingActive ? "on" : "off"))"
@@ -236,9 +246,20 @@ class TranscriptionManager: ObservableObject {
     enqueueChunk(samples: samples, engine: engine, isFinal: false)
   }
 
-  private func stopRecordingAndTranscribe() {
+  private func stopRecordingAndTranscribe(otherKeyPressed: Bool) {
     guard state == .recording else {
       logger.warning("Cannot stop recording: not recording")
+      return
+    }
+
+    // A shortcut such as fn+Delete or fn+arrow, or a short tap of the
+    // hotkey, is not a dictation: models can return text such as "Thank
+    // you." for near-silent audio, and it would be typed. Discard it,
+    // unless Live Typing already sent part of the session.
+    let heldFor = ProcessInfo.processInfo.systemUptime - recordingStartTime
+    if sessionChunkCount == 0 && (otherKeyPressed || heldFor < Self.minimumHoldDuration) {
+      cancelRecording(
+        reason: otherKeyPressed ? "another key was pressed with the hotkey" : "the hotkey was only tapped")
       return
     }
 
@@ -339,6 +360,18 @@ class TranscriptionManager: ObservableObject {
   private func cancelChunkTasks() {
     chunkTasks.forEach { $0.cancel() }
     chunkTasks = []
+  }
+
+  /// End the recording without transcribing it.
+  private func cancelRecording(reason: String) {
+    guard state == .recording else { return }
+    _ = audioRecorder?.stopRecording()
+    pauseDetector.end()
+    activeEngine = nil
+    cancelChunkTasks()
+    sessionID += 1
+    logger.info("Recording discarded: \(reason, privacy: .public)")
+    setState(.idle)
   }
 
   /// Post-process and type one chunk's text. Runs on the main actor, in

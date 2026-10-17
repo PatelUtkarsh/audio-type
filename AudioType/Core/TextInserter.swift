@@ -3,6 +3,20 @@ import Carbon
 import Foundation
 import os.log
 
+/// Marks the key events that AudioType posts, so its own hotkey listener can
+/// tell them from the user's typing.
+enum SyntheticKeyEvent {
+  private static let userData: Int64 = 0x4155_4449_4F54  // "AUDIOT"
+
+  static func mark(_ event: CGEvent) {
+    event.setIntegerValueField(.eventSourceUserData, value: userData)
+  }
+
+  static func isMarked(_ event: CGEvent) -> Bool {
+    event.getIntegerValueField(.eventSourceUserData) == userData
+  }
+}
+
 @MainActor
 final class TextInserter {
   private let logger = Logger(subsystem: "com.audiotype", category: "TextInserter")
@@ -93,6 +107,8 @@ final class TextInserter {
     // characters into modified keystrokes in some apps.
     keyDown.flags = []
     keyUp.flags = []
+    SyntheticKeyEvent.mark(keyDown)
+    SyntheticKeyEvent.mark(keyUp)
 
     // Post events
     keyDown.post(tap: .cgSessionEventTap)
@@ -177,6 +193,8 @@ final class TextInserter {
     // Add Command modifier
     keyDown.flags = .maskCommand
     keyUp.flags = .maskCommand
+    SyntheticKeyEvent.mark(keyDown)
+    SyntheticKeyEvent.mark(keyUp)
 
     keyDown.post(tap: .cgSessionEventTap)
     keyUp.post(tap: .cgSessionEventTap)
