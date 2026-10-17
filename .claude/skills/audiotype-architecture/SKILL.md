@@ -56,9 +56,11 @@ Protocol + resolver in `Core/TranscriptionEngine.swift`:
 protocol TranscriptionEngine {
     var displayName: String { get }
     var isAvailable: Bool { get }
-    func transcribe(samples: [Float]) async throws -> String
+    func transcribe(samples: [Float], context: TranscriptionContext) async throws -> String
 }
 ```
+
+`TranscriptionContext.precedingText` is the end of the text typed so far in the dictation; cloud engines send it as the `prompt` form field so a Live Typing chunk continues the sentence. `isPartial` marks one Live Typing chunk.
 
 Hierarchy:
 - `WhisperAPIEngine` (base, in `WAVEncoder.swift`) — WAV encoding, multipart POST, bearer auth, error mapping
