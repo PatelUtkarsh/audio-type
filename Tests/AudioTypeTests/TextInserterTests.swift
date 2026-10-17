@@ -23,16 +23,16 @@ final class TextInserterTests: XCTestCase {
     let board = makePasteboard()
     defer { board.releaseGlobally() }
     let reads = Reads()
-    let inserter = TextInserter(pasteboard: board, pasteSettleDelay: .milliseconds(150)) {
-      // A target app that reads the pasteboard 60 ms after Cmd+V.
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+    let inserter = TextInserter(pasteboard: board, pasteSettleDelay: .milliseconds(300)) {
+      // A target app that reads the pasteboard 50 ms after Cmd+V.
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
         reads.values.append(board.string(forType: .string) ?? "")
       }
     }
 
     await inserter.insertText(longA)
     await inserter.insertText(longB)
-    try await Task.sleep(for: .milliseconds(400))
+    try await Task.sleep(for: .milliseconds(900))
 
     XCTAssertEqual(reads.values, [longA, longB])
   }

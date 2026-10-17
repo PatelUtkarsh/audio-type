@@ -28,7 +28,7 @@ jobs:
         run: brew install swiftlint
 
       - name: Run SwiftLint
-        run: swiftlint lint AudioType
+        run: swiftlint lint --strict AudioType
 
   build:
     name: Build
@@ -80,4 +80,3 @@ jobs:
 
       - name: Run tests
         run: swift test
-        continue-on-error: true  # Tests may not exist yet
