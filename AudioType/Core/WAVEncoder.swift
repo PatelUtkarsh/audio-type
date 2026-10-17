@@ -72,7 +72,7 @@ class WhisperAPIEngine: TranscriptionEngine {
 
   // MARK: - TranscriptionEngine
 
-  func transcribe(samples: [Float]) async throws -> String {
+  func transcribe(samples: [Float], context: TranscriptionContext) async throws -> String {
     guard let apiKey = apiKey, !apiKey.isEmpty else {
       throw WhisperAPIError.apiKeyNotConfigured(config.providerName)
     }
@@ -95,7 +95,8 @@ class WhisperAPIEngine: TranscriptionEngine {
       apiKey: apiKey,
       wavData: wavData,
       model: currentModel,
-      languageCode: TranscriptionLanguage.current.isoCode
+      languageCode: TranscriptionLanguage.current.isoCode,
+      prompt: context.precedingText
     )
 
     let (data, response): (Data, URLResponse)
@@ -275,12 +276,17 @@ enum WAVEncoder {
   ///
   /// Returns the request and body separately so callers can pass the body
   /// to `URLSession.upload(for:from:)` instead of setting `httpBody`.
+  ///
+  /// `prompt` is the text that came before this audio. The OpenAI guide
+  /// recommends the preceding segment's transcript as the prompt when audio
+  /// is split; Groq allows up to 224 tokens.
   static func buildRequest(
     url: URL,
     apiKey: String,
     wavData: Data,
     model: String,
     languageCode: String?,
+    prompt: String? = nil,
     timeoutInterval: TimeInterval = 30
   ) -> (URLRequest, Data) {
     let boundary = UUID().uuidString
@@ -309,6 +315,11 @@ enum WAVEncoder {
     if let langCode = languageCode {
       body.appendFormField(
         boundary: boundary, name: "language", value: langCode
+      )
+    }
+    if let prompt = prompt, !prompt.isEmpty {
+      body.appendFormField(
+        boundary: boundary, name: "prompt", value: prompt
       )
     }
     body.appendFormField(

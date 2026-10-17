@@ -43,11 +43,15 @@ class TranscriptionManager: ObservableObject {
   private var hotKeyManager: HotKeyManager?
   private var textInserter: TextInserter?
 
-  /// Tail of the ordered-insertion chain. Each chunk's API call starts
-  /// immediately (calls may overlap), but results are inserted strictly in
-  /// spoken order by chaining on the previous chunk's task. Cancelled when
-  /// a new recording starts so stale text never lands in a new context.
-  private var insertTail: Task<Void, Never>?
+  /// The current session's chunk tasks, in spoken order. Each one waits for
+  /// the one before it, so a chunk is sent with the text before it as its
+  /// prompt and its text is typed in spoken order. Cancelled when a new
+  /// recording starts so stale text never lands in a new context.
+  private var chunkTasks: [Task<Void, Never>] = []
+
+  /// Increases at each recording start. Chunk work from an older session
+  /// checks it and does nothing.
+  private var sessionID = 0
 
   /// Chunk-boundary policy for live typing. Fed level updates on the main
   /// queue while recording.
@@ -57,10 +61,9 @@ class TranscriptionManager: ObservableObject {
   /// mid-recording doesn't change behavior halfway through.
   private var liveTypingActive = false
 
-  /// Whether the next inserted chunk starts a sentence (capitalize its
-  /// first letter). True at session start; afterwards tracks whether the
-  /// previous chunk ended with terminal punctuation.
-  private var nextChunkStartsSentence = true
+  /// Joins the session's chunks: holds back the period that a pause cut
+  /// adds and supplies the prompt for the next chunk.
+  private var chunkJoiner = LiveChunkJoiner()
 
   /// Whether the last character AudioType typed was whitespace. When it
   /// wasn't, the next chunk gets one separator space typed up front as its
@@ -174,10 +177,11 @@ class TranscriptionManager: ObservableObject {
       return
     }
 
-    // Cancel any still-pending insertion chain from a previous recording so
-    // we don't insert stale text into the user's new context.
-    insertTail?.cancel()
-    insertTail = nil
+    // Cancel any still-pending chunk work from a previous recording so we
+    // don't insert stale text into the user's new context.
+    cancelChunkTasks()
+    sessionID += 1
+    chunkJoiner = LiveChunkJoiner()
 
     // Resolve the engine once, up front. The whole session reuses it.
     let engine = EngineResolver.resolve()
@@ -185,7 +189,6 @@ class TranscriptionManager: ObservableObject {
     activeEngineName = engine.displayName
 
     liveTypingActive = LiveTypingSetting.isEnabled
-    nextChunkStartsSentence = true
     sessionChunkCount = 0
     if liveTypingActive {
       pauseDetector.begin(at: ProcessInfo.processInfo.systemUptime)
@@ -244,7 +247,7 @@ class TranscriptionManager: ObservableObject {
 
     // Nothing captured and nothing in flight: bail like before.
     let tail = finalSamples ?? []
-    if tail.isEmpty && insertTail == nil {
+    if tail.isEmpty && chunkTasks.isEmpty {
       logger.error("No audio samples captured")
       setState(.idle)
       return
@@ -263,80 +266,85 @@ class TranscriptionManager: ObservableObject {
     finishSession()
   }
 
-  /// Start a chunk's transcription immediately and chain its insertion
-  /// behind the previous chunk so text always lands in spoken order.
+  /// Transcribe one chunk and type its text. Chunks run one after another:
+  /// each request waits for the chunk before it, so it can send the text so
+  /// far as its prompt (the model then continues the sentence instead of
+  /// starting a new one), and text always lands in spoken order. A cut
+  /// needs at least 3s of audio, so the previous request has usually
+  /// finished by then and the wait costs little.
   private func enqueueChunk(samples: [Float], engine: TranscriptionEngine, isFinal: Bool) {
     sessionChunkCount += 1
     let chunkIndex = sessionChunkCount
+    let isPartial = !isFinal || chunkIndex > 1
+    let session = sessionID
     let logger = self.logger
-    let startTime = ProcessInfo.processInfo.systemUptime
+    let previous = chunkTasks.last
 
-    let transcription = Task.detached(priority: .userInitiated) {
-      try await engine.transcribe(samples: samples)
-    }
-
-    let previous = insertTail
-    insertTail = Task { [weak self] in
+    let task = Task { [weak self] in
       await previous?.value
+      guard !Task.isCancelled, let self = self, self.sessionID == session else { return }
+      let context = TranscriptionContext(
+        precedingText: self.chunkJoiner.prompt(), isPartial: isPartial)
+      let startTime = ProcessInfo.processInfo.systemUptime
       do {
-        let text = try await transcription.value
+        let text = try await engine.transcribe(samples: samples, context: context)
         let elapsed = ProcessInfo.processInfo.systemUptime - startTime
         logger.info(
           "[\(engine.displayName)] Chunk \(chunkIndex) transcribed in \(elapsed, format: .fixed(precision: 2))s: \(text)"
         )
-        guard !Task.isCancelled else { return }
-        await MainActor.run {
-          self?.insertChunk(text)
-        }
+        guard !Task.isCancelled, self.sessionID == session else { return }
+        self.insertChunk(text, isFinal: isFinal)
       } catch {
         logger.error(
           "[\(engine.displayName)] Chunk \(chunkIndex) failed: \(error.localizedDescription)"
         )
-        guard !Task.isCancelled, isFinal else { return }
+        guard !Task.isCancelled, isFinal, self.sessionID == session else { return }
         // Non-final chunk failures drop that fragment and the session keeps
         // going; a final failure surfaces like the old single-shot path.
-        await MainActor.run {
-          guard let self = self, case .processing = self.state else { return }
-          self.setState(.error("Transcription failed"))
-          Task {
-            try? await Task.sleep(for: .seconds(2))
-            if case .error = self.state {
-              self.setState(.idle)
-            }
+        guard case .processing = self.state else { return }
+        self.setState(.error("Transcription failed"))
+        Task {
+          try? await Task.sleep(for: .seconds(2))
+          if case .error = self.state {
+            self.setState(.idle)
           }
         }
       }
     }
+    chunkTasks.append(task)
+  }
+
+  private func cancelChunkTasks() {
+    chunkTasks.forEach { $0.cancel() }
+    chunkTasks = []
   }
 
   /// Post-process and type one chunk's text. Runs on the main actor, in
   /// chunk order.
-  private func insertChunk(_ text: String) {
-    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty else { return }
+  private func insertChunk(_ text: String, isFinal: Bool) {
+    guard let insertion = chunkJoiner.append(text, isFinal: isFinal) else { return }
     let processed = TextPostProcessor.shared.process(
-      trimmed, capitalizeFirst: nextChunkStartsSentence
+      insertion.text, capitalizeFirst: insertion.startsSentence
     )
 
-    // Separator first, as a standalone keystroke (a 1-char insert always
-    // takes the keystroke path, never the clipboard).
+    // The previous chunk's held-back period (when this chunk starts a new
+    // sentence) and the separator space go first, as one short keystroke
+    // insert that never takes the clipboard path: editors with smart paste
+    // can strip whitespace at the edges of pasted payloads. After a line
+    // break, no period and no space are needed.
     if !lastInsertEndedWithWhitespace {
-      textInserter?.insertText(" ")
+      textInserter?.insertText(insertion.terminator + " ")
     }
     textInserter?.insertText(processed)
     lastInsertEndedWithWhitespace = processed.last?.isWhitespace ?? false
-
-    if let last = processed.last {
-      nextChunkStartsSentence =
-        last == "." || last == "!" || last == "?" || last == "\n"
-    }
   }
 
-  /// Wait for the insertion chain to drain, keep the processing indicator
-  /// up for at least 0.5s so it doesn't flash, then return to idle.
+  /// Wait for the chunk tasks to drain, keep the processing indicator up
+  /// for at least 0.5s so it doesn't flash, then return to idle.
   private func finishSession() {
-    let pipeline = insertTail
+    let pipeline = chunkTasks.last
     let start = processingStart
+    let session = sessionID
     Task { [weak self] in
       await pipeline?.value
       let elapsed = ProcessInfo.processInfo.systemUptime - start
@@ -344,21 +352,25 @@ class TranscriptionManager: ObservableObject {
       if remaining > 0 {
         try? await Task.sleep(for: .seconds(remaining))
       }
-      guard let self = self else { return }
+      guard let self = self, self.sessionID == session else { return }
       // Only the processing state transitions to idle here; an error set by
-      // the final chunk (or a newer session's state) is left alone.
+      // the final chunk is left alone.
       if case .processing = self.state {
-        // Close the dictation with one trailing space keystroke so the next
-        // session (or the user's own typing) doesn't run into this text.
-        // Skipped when nothing was inserted or output already ends in
-        // whitespace.
-        if !self.lastInsertEndedWithWhitespace {
-          self.textInserter?.insertText(" ")
-          self.lastInsertEndedWithWhitespace = true
-        }
+        self.closeDictation()
         self.setState(.idle)
       }
     }
+  }
+
+  /// Type the period that is still held back, if any, and one trailing
+  /// space so the next session (or the user's own typing) doesn't run into
+  /// this text. Skipped when nothing was inserted or the output already
+  /// ends in whitespace.
+  private func closeDictation() {
+    let terminator = chunkJoiner.finish()
+    guard !lastInsertEndedWithWhitespace else { return }
+    textInserter?.insertText(terminator + " ")
+    lastInsertEndedWithWhitespace = true
   }
 
   private func setState(_ newState: TranscriptionState) {

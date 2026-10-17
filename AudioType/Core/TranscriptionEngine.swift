@@ -37,6 +37,20 @@ enum TranscriptionEngineType: String, CaseIterable, Identifiable {
   }
 }
 
+// MARK: - Transcription Context
+
+/// Extra input for one transcription request.
+struct TranscriptionContext {
+  /// End of the text already typed in this dictation, or nil. Cloud engines
+  /// send it as the `prompt`, so the model continues the sentence instead
+  /// of starting a new one at each Live Typing cut.
+  var precedingText: String?
+
+  /// True when the audio is only one part of the dictation (Live Typing cut
+  /// it at a pause).
+  var isPartial: Bool
+}
+
 // MARK: - Transcription Engine Protocol
 
 /// Common interface for all speech-to-text backends.
@@ -48,7 +62,7 @@ protocol TranscriptionEngine {
   var isAvailable: Bool { get }
 
   /// Transcribe 16 kHz mono Float32 PCM samples into text.
-  func transcribe(samples: [Float]) async throws -> String
+  func transcribe(samples: [Float], context: TranscriptionContext) async throws -> String
 }
 
 // MARK: - Engine Resolver

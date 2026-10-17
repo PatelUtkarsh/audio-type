@@ -66,7 +66,7 @@ class AppleSpeechEngine: TranscriptionEngine {
 
   // MARK: - TranscriptionEngine
 
-  func transcribe(samples: [Float]) async throws -> String {
+  func transcribe(samples: [Float], context: TranscriptionContext) async throws -> String {
     // Check (and request if needed) authorization
     var status = SFSpeechRecognizer.authorizationStatus()
     if status == .notDetermined {
