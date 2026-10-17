@@ -305,7 +305,7 @@ class TranscriptionManager: ObservableObject {
           "[\(engine.displayName)] Chunk \(chunkIndex) transcribed in \(elapsed, format: .fixed(precision: 2))s: \(text)"
         )
         guard !Task.isCancelled, self.sessionID == session else { return }
-        self.insertChunk(text, isFinal: isFinal)
+        await self.insertChunk(text, isFinal: isFinal)
       } catch {
         logger.error(
           "[\(engine.displayName)] Chunk \(chunkIndex) failed: \(error.localizedDescription)"
@@ -343,7 +343,7 @@ class TranscriptionManager: ObservableObject {
 
   /// Post-process and type one chunk's text. Runs on the main actor, in
   /// chunk order.
-  private func insertChunk(_ text: String, isFinal: Bool) {
+  private func insertChunk(_ text: String, isFinal: Bool) async {
     guard let insertion = chunkJoiner.append(text, isFinal: isFinal) else { return }
     let processed = TextPostProcessor.shared.process(
       insertion.text, capitalizeFirst: insertion.startsSentence
@@ -355,9 +355,9 @@ class TranscriptionManager: ObservableObject {
     // can strip whitespace at the edges of pasted payloads. After a line
     // break, no period and no space are needed.
     if !lastInsertEndedWithWhitespace {
-      textInserter?.insertText(insertion.terminator + " ")
+      await textInserter?.insertText(insertion.terminator + " ")
     }
-    textInserter?.insertText(processed)
+    await textInserter?.insertText(processed)
     lastInsertEndedWithWhitespace = processed.last?.isWhitespace ?? false
   }
 
@@ -377,7 +377,7 @@ class TranscriptionManager: ObservableObject {
       guard let self = self, self.sessionID == session, case .processing = self.state else {
         return
       }
-      self.closeDictation()
+      await self.closeDictation()
       if let failure = self.sessionFailure {
         // Say so when other chunks were typed: the text has a gap.
         self.showError(
@@ -392,10 +392,10 @@ class TranscriptionManager: ObservableObject {
   /// space so the next session (or the user's own typing) doesn't run into
   /// this text. Skipped when nothing was inserted or the output already
   /// ends in whitespace.
-  private func closeDictation() {
+  private func closeDictation() async {
     let terminator = chunkJoiner.finish()
     guard !lastInsertEndedWithWhitespace else { return }
-    textInserter?.insertText(terminator + " ")
+    await textInserter?.insertText(terminator + " ")
     lastInsertEndedWithWhitespace = true
   }
 
