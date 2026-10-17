@@ -167,8 +167,14 @@ class TranscriptionManager: ObservableObject {
   private var activeEngine: TranscriptionEngine?
 
   private func startRecording() {
-    guard state == .idle else {
-      logger.warning("Cannot start recording: not in idle state")
+    // An error state never blocks a new recording: it only reports the last
+    // failure. Before, a failed microphone start left the app in .error
+    // with every later hotkey press ignored until a relaunch.
+    switch state {
+    case .idle, .error:
+      break
+    case .recording, .processing:
+      logger.warning("Cannot start recording: a session is still active")
       return
     }
 
@@ -202,7 +208,9 @@ class TranscriptionManager: ObservableObject {
       )
     } catch {
       logger.error("Failed to start recording: \(error.localizedDescription)")
-      setState(.error("Failed to start recording"))
+      activeEngine = nil
+      pauseDetector.end()
+      showError("Could not start the microphone")
     }
   }
 
@@ -371,6 +379,20 @@ class TranscriptionManager: ObservableObject {
     guard !lastInsertEndedWithWhitespace else { return }
     textInserter?.insertText(terminator + " ")
     lastInsertEndedWithWhitespace = true
+  }
+
+  /// How long an error stays in the menu bar before the state returns to
+  /// idle: long enough to open the menu and read it. A new recording does
+  /// not wait for this.
+  private static let errorDisplayDuration: Duration = .seconds(5)
+
+  private func showError(_ message: String) {
+    setState(.error(message))
+    Task { [weak self] in
+      try? await Task.sleep(for: Self.errorDisplayDuration)
+      guard let self = self, self.state == .error(message) else { return }
+      self.setState(.idle)
+    }
   }
 
   private func setState(_ newState: TranscriptionState) {

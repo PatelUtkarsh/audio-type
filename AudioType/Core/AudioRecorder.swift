@@ -88,9 +88,16 @@ class AudioRecorder {
       self?.processAudioBuffer(buffer, converter: converter, targetFormat: targetFormat)
     }
 
-    // Start audio engine
+    // Start audio engine. On failure, release the tap and the engine so the
+    // next attempt starts clean.
     engine.prepare()
-    try engine.start()
+    do {
+      try engine.start()
+    } catch {
+      inputNode.removeTap(onBus: 0)
+      audioEngine = nil
+      throw error
+    }
 
     isRecording = true
     logger.info("Recording started")
