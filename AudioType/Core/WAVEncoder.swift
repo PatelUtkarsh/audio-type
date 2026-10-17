@@ -99,23 +99,17 @@ class WhisperAPIEngine: TranscriptionEngine {
       prompt: context.precedingText
     )
 
-    let (data, response): (Data, URLResponse)
-    do {
-      // upload(for:from:) keeps a single copy of the body; setting
-      // request.httpBody and calling data(for:) tends to keep the body
-      // resident in two places. With ~2 MB WAV bodies this matters.
-      (data, response) = try await URLSession.shared.upload(for: request, from: body)
-    } catch {
-      throw WhisperAPIError.networkError(error.localizedDescription)
-    }
+    var (data, httpResponse) = try await send(request, body: body)
 
-    guard let httpResponse = response as? HTTPURLResponse else {
-      throw WhisperAPIError.invalidResponse
+    // One retry for a short rate-limit wait (for example a burst of Live
+    // Typing chunks against Groq's 20 requests per minute).
+    if httpResponse.statusCode == 429, let delay = Self.retryDelay(for: httpResponse) {
+      logger.info(
+        "\(self.config.providerName) rate limited; retrying in \(delay, format: .fixed(precision: 1))s"
+      )
+      try await Task.sleep(for: .seconds(delay))
+      (data, httpResponse) = try await send(request, body: body)
     }
-
-    logger.info(
-      "\(self.config.providerName) HTTP \(httpResponse.statusCode)"
-    )
 
     switch httpResponse.statusCode {
     case 200:
@@ -139,6 +133,42 @@ class WhisperAPIEngine: TranscriptionEngine {
       logger.error("Failed to decode response: \(raw)")
       throw WhisperAPIError.invalidResponse
     }
+  }
+
+  // MARK: - HTTP
+
+  /// Longest `retry-after` wait worth taking. A longer wait would stall
+  /// Live Typing, so the request fails instead.
+  private static let maxRetryDelay: TimeInterval = 5
+
+  /// Seconds to wait before retrying a 429 response: the `retry-after`
+  /// header, or 1s when it is missing or not a number. Nil when the wait
+  /// is longer than `maxRetryDelay`.
+  private static func retryDelay(for response: HTTPURLResponse) -> TimeInterval? {
+    let header = response.value(forHTTPHeaderField: "Retry-After")
+    let delay = header.flatMap { TimeInterval($0.trimmingCharacters(in: .whitespaces)) } ?? 1
+    return delay <= maxRetryDelay ? max(delay, 0) : nil
+  }
+
+  private func send(_ request: URLRequest, body: Data) async throws -> (Data, HTTPURLResponse) {
+    let (data, response): (Data, URLResponse)
+    do {
+      // upload(for:from:) keeps a single copy of the body; setting
+      // request.httpBody and calling data(for:) tends to keep the body
+      // resident in two places. With ~2 MB WAV bodies this matters.
+      (data, response) = try await URLSession.shared.upload(for: request, from: body)
+    } catch {
+      throw WhisperAPIError.networkError(error.localizedDescription)
+    }
+
+    guard let httpResponse = response as? HTTPURLResponse else {
+      throw WhisperAPIError.invalidResponse
+    }
+
+    logger.info(
+      "\(self.config.providerName) HTTP \(httpResponse.statusCode)"
+    )
+    return (data, httpResponse)
   }
 }
 
