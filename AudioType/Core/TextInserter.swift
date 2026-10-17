@@ -30,9 +30,14 @@ final class TextInserter {
   private let pasteboard: NSPasteboard
 
   /// Time the target app gets to read the pasteboard after Cmd+V. The
-  /// pasteboard does not change again before this, and the user's clipboard
-  /// comes back this long after the last paste.
+  /// pasteboard does not change again before this. The user's clipboard
+  /// comes back twice this long after the last paste, so a chunk that
+  /// follows at once joins the burst instead of racing the restore.
   private let pasteSettleDelay: Duration
+
+  /// Marks the pasted text as temporary, so clipboard managers do not
+  /// record each dictated chunk (nspasteboard.org convention).
+  private static let transientType = NSPasteboard.PasteboardType("org.nspasteboard.TransientType")
 
   private let postPaste: () -> Void
 
@@ -131,21 +136,26 @@ final class TextInserter {
     // A cancelled session must not paste stale text.
     guard !Task.isCancelled else { return }
 
-    if let pending = restoreTask {
-      // Part of a burst: the clipboard saved at the first paste stays.
-      pending.cancel()
-    } else {
+    // Part of a burst while the pasteboard still holds our last paste: the
+    // clipboard saved at the first paste stays. If anything was copied
+    // since, that is the clipboard to keep.
+    let burstContinues = restoreTask != nil && pasteboard.changeCount == pastedChangeCount
+    restoreTask?.cancel()
+    if !burstContinues {
       savedClipboard = Self.snapshot(of: pasteboard)
     }
 
+    let item = NSPasteboardItem()
+    item.setString(text, forType: .string)
+    item.setData(Data(), forType: Self.transientType)
     pasteboard.clearContents()
-    pasteboard.setString(text, forType: .string)
+    pasteboard.writeObjects([item])
     pastedChangeCount = pasteboard.changeCount
     postPaste()
     lastPasteTime = .now
 
-    restoreTask = Task { [weak self, pasteSettleDelay] in
-      try? await Task.sleep(for: pasteSettleDelay)
+    restoreTask = Task { [weak self, restoreDelay = pasteSettleDelay * 2] in
+      try? await Task.sleep(for: restoreDelay)
       guard !Task.isCancelled else { return }
       self?.restoreClipboard()
     }

@@ -47,7 +47,7 @@ final class TextInserterTests: XCTestCase {
 
     await inserter.insertText(longA)
     await inserter.insertText(longB)
-    try await Task.sleep(for: .milliseconds(300))
+    try await Task.sleep(for: .milliseconds(450))
 
     XCTAssertEqual(board.string(forType: .string), "user clip")
   }
@@ -62,9 +62,43 @@ final class TextInserterTests: XCTestCase {
     let inserter = TextInserter(pasteboard: board, pasteSettleDelay: .milliseconds(100)) {}
 
     await inserter.insertText(longA)
-    try await Task.sleep(for: .milliseconds(300))
+    try await Task.sleep(for: .milliseconds(450))
 
     XCTAssertEqual(board.data(forType: imageType), Data([1, 2, 3]))
+  }
+
+  @MainActor
+  func testCopyBetweenBackToBackPastesIsKept() async throws {
+    let board = makePasteboard()
+    defer { board.releaseGlobally() }
+    board.clearContents()
+    board.setString("old clip", forType: .string)
+    let inserter = TextInserter(pasteboard: board, pasteSettleDelay: .milliseconds(100)) {}
+
+    await inserter.insertText(longA)
+    // The user or a password manager copies while the restore is pending.
+    board.clearContents()
+    board.setString("new copy", forType: .string)
+    await inserter.insertText(longB)
+    try await Task.sleep(for: .milliseconds(450))
+
+    XCTAssertEqual(board.string(forType: .string), "new copy")
+  }
+
+  @MainActor
+  func testPastedTextIsMarkedTransient() async {
+    let board = makePasteboard()
+    defer { board.releaseGlobally() }
+    var typesAtPaste: [NSPasteboard.PasteboardType] = []
+    let inserter = TextInserter(pasteboard: board, pasteSettleDelay: .milliseconds(50)) {
+      typesAtPaste = board.types ?? []
+    }
+
+    await inserter.insertText(longA)
+
+    // Clipboard managers skip items with this type (nspasteboard.org).
+    XCTAssertTrue(typesAtPaste.contains(NSPasteboard.PasteboardType("org.nspasteboard.TransientType")))
+    XCTAssertTrue(typesAtPaste.contains(.string))
   }
 
   @MainActor
