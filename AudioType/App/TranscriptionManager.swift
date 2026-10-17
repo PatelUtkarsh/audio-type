@@ -88,6 +88,13 @@ class TranscriptionManager: ObservableObject {
   private init() {}
 
   func initialize() async {
+    // Onboarding can finish twice (button and auto-complete). A second run
+    // would start a second HotKeyManager while the first, which retains
+    // itself for its event tap, keeps listening.
+    guard !isInitialized else {
+      logger.info("TranscriptionManager already initialized")
+      return
+    }
     logger.info("Initializing TranscriptionManager...")
 
     // Initialize components
@@ -141,11 +148,20 @@ class TranscriptionManager: ObservableObject {
     EngineResolver.invalidateCache()
     let engine = EngineResolver.resolve()
     activeEngineName = engine.displayName
-    if EngineResolver.anyEngineAvailable {
-      setState(.idle)
-      logger.info("Engine config changed, active engine: \(engine.displayName)")
-    } else {
-      setState(.error("No engine available - add a cloud API key or enable Apple Speech"))
+    logger.info("Engine config changed, active engine: \(engine.displayName)")
+
+    // A session in progress keeps the engine it started with. Forcing .idle
+    // here left the recorder running, and the next session sent the old
+    // audio too.
+    switch state {
+    case .recording, .processing:
+      return
+    case .idle, .error:
+      if EngineResolver.anyEngineAvailable {
+        setState(.idle)
+      } else {
+        setState(.error("No engine available - add a cloud API key or enable Apple Speech"))
+      }
     }
   }
 
