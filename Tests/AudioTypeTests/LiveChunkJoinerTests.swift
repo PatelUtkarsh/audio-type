@@ -69,6 +69,31 @@ final class LiveChunkJoinerTests: XCTestCase {
     XCTAssertEqual(first.text, "We moved to the U.S.")
   }
 
+  func testDottedNameAtTheEndIsHeldBack() throws {
+    var joiner = LiveChunkJoiner()
+    let first = try XCTUnwrap(joiner.append("We use Node.js.", isFinal: false))
+    XCTAssertEqual(first.text, "We use Node.js")
+
+    let next = try XCTUnwrap(joiner.append("for the backend.", isFinal: true))
+    XCTAssertEqual(next.terminator, "")
+  }
+
+  func testDecimalAtTheEndIsHeldBack() throws {
+    var joiner = LiveChunkJoiner()
+    let first = try XCTUnwrap(joiner.append("Pi is about 3.14.", isFinal: false))
+    XCTAssertEqual(first.text, "Pi is about 3.14")
+  }
+
+  func testCapitalStartAfterAJoiningWordContinuesTheSentence() throws {
+    var joiner = LiveChunkJoiner()
+    // "and" cannot end a sentence, so the period is wrong even though the
+    // next chunk starts with "I".
+    _ = joiner.append("I came home and.", isFinal: false)
+
+    let next = try XCTUnwrap(joiner.append("I went to bed.", isFinal: true))
+    XCTAssertEqual(next, .init(terminator: "", text: "I went to bed.", startsSentence: false))
+  }
+
   func testPunctuationOnlyChunkIsIgnored() {
     var joiner = LiveChunkJoiner()
     XCTAssertNil(joiner.append("...", isFinal: false))

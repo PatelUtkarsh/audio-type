@@ -45,7 +45,8 @@ struct LiveChunkJoiner {
       return nil
     }
 
-    let continuesSentence = hasText && Self.startsMidSentence(text)
+    let continuesSentence =
+      hasText && (Self.startsMidSentence(text) || Self.endsWithJoiningWord(transcript))
     let terminator = continuesSentence ? "" : (heldTerminator ?? "")
     heldTerminator = nil
 
@@ -109,19 +110,40 @@ struct LiveChunkJoiner {
   }
 
   /// A chunk transcribed with context continues the sentence when its first
-  /// letter is lowercase or it starts with a digit.
+  /// letter is lowercase or it starts with a digit. A capital ("I", a name)
+  /// gives no signal.
   private static func startsMidSentence(_ text: String) -> Bool {
     guard let first = text.first(where: { $0.isLetter || $0.isNumber }) else { return false }
     return first.isNumber || first.isLowercase
   }
 
-  /// The final "..." , "…" or "." to hold back. Never "?" or "!", and not
-  /// the dot of an abbreviation with an inner dot ("U.S.", "e.g.").
+  /// English words that do not end a sentence. After one of them, a held
+  /// period is wrong even when the next chunk starts with a capital
+  /// ("and [pause] I went"). Words that can end a sentence ("to", "in",
+  /// "can", "it") are left out on purpose.
+  private static let joiningWords: Set<String> = [
+    "a", "an", "the", "and", "or", "but", "nor", "because", "if", "although",
+    "though", "unless", "whether", "than", "when", "while", "of", "with",
+    "from", "into", "onto", "between", "during", "without", "my", "your",
+    "our", "their", "its", "these", "those", "every", "each", "um", "uh"
+  ]
+
+  private static func endsWithJoiningWord(_ text: String) -> Bool {
+    guard let lastWord = text.split(whereSeparator: \.isWhitespace).last else { return false }
+    let word = lastWord.lowercased().trimmingCharacters(in: .punctuationCharacters)
+    return joiningWords.contains(word)
+  }
+
+  /// The final "...", "…" or "." to hold back. Never "?" or "!", and not
+  /// the dot of a letter abbreviation ("U.S.", "e.g.", "a.m."), which must
+  /// stay. A dotted name or number ("Node.js.", "3.14.") is held back.
   private static func heldPeriod(at text: String) -> String? {
     if text.hasSuffix("...") { return "..." }
     if text.hasSuffix("…") { return "…" }
     guard text.hasSuffix(".") else { return nil }
-    let lastWord = text.split(whereSeparator: \.isWhitespace).last ?? ""
-    return lastWord.dropLast().contains(".") ? nil : "."
+    let lastWord = String(text.split(whereSeparator: \.isWhitespace).last ?? "")
+    let isAbbreviation =
+      lastWord.range(of: "^(\\p{L}{1,3}\\.){2,}$", options: .regularExpression) != nil
+    return isAbbreviation ? nil : "."
   }
 }
