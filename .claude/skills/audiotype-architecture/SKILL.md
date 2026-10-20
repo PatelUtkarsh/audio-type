@@ -28,8 +28,7 @@ AudioType/AudioType/
 │               GroqEngine, OpenAIEngine, AppleSpeechEngine,
 │               TextPostProcessor, TextInserter
 ├── UI/         SettingsView, RecordingOverlay, OnboardingView, Theme
-├── Utilities/  Permissions, KeychainHelper
-└── Resources/  Assets.xcassets
+└── Utilities/  Permissions, KeychainHelper
 ```
 
 `Resources/` at repo root holds `Info.plist` and `AppIcon.icns`. Build via `make app` (or `swift build`). No external Swift packages — `Package.swift` is dependency-free on purpose.

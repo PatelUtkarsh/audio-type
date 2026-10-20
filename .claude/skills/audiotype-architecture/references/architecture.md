@@ -350,9 +350,6 @@ AudioType/
 |   |-- Utilities/
 |   |   |-- Permissions.swift           # Mic, Accessibility, Speech Recognition helpers
 |   |   +-- KeychainHelper.swift        # macOS Keychain-based secret storage
-|   |
-|   +-- Resources/
-|       +-- Assets.xcassets
 |
 |-- Resources/
 |   |-- Info.plist

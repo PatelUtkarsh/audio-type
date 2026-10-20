@@ -175,8 +175,6 @@ AudioType/
   Utilities/
     Permissions.swift       # Microphone, Accessibility, Speech Recognition permission helpers
     KeychainHelper.swift    # macOS Keychain-based secret storage
-  Resources/
-    Assets.xcassets/        # Asset catalog (currently empty)
 Resources/
   Info.plist              # Bundle config (LSUIElement, mic + speech recognition usage descriptions)
   AppIcon.icns            # App icon (coral gradient)
