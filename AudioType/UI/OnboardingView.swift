@@ -229,6 +229,9 @@ struct OnboardingView: View {
   }
 
   private func completeOnboarding() {
+    // The timer can auto-complete too; finish only once.
+    guard !didAutoComplete else { return }
+    didAutoComplete = true
     onComplete()
   }
 }

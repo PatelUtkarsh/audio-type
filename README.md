@@ -15,10 +15,11 @@ A native macOS menu bar app for voice-to-text. Hold **fn** to record, release to
 
 AudioType offers two transcription modes with different privacy trade-offs:
 
-### Local macOS Speech API (private by default)
+### Local macOS Speech API (private when on-device recognition is available)
 
-- Uses Apple's built-in `SFSpeechRecognizer` — runs **entirely on-device** when on-device recognition is available (macOS 13+)
-- **No audio leaves your machine**, no API key needed, no internet required
+- Uses Apple's built-in `SFSpeechRecognizer` — runs **entirely on-device** when on-device recognition is available for your language (macOS 13+)
+- With on-device recognition, **no audio leaves your machine**, no API key needed, no internet required
+- If on-device recognition is not available for the selected language, macOS sends the audio to Apple's servers for recognition instead
 - Works out of the box with zero configuration
 - Accuracy is good for everyday dictation, though cloud providers may perform better for specialized vocabulary
 
@@ -34,7 +35,7 @@ AudioType offers two transcription modes with different privacy trade-offs:
 
 ## Requirements
 
-- macOS 14.0 (Sonoma) or later
+- macOS 13.0 (Ventura) or later
 - Apple Silicon or Intel Mac
 - Internet connection (for cloud engines; not needed for Apple Speech)
 - A cloud API key (optional — app works without one using Apple Speech):
@@ -128,9 +129,10 @@ You can skip the API key step to use Apple Speech. Additional cloud providers (O
 - **Groq API Key** — add or update your Groq key
 - **OpenAI API Key** — add or update your OpenAI key
 - **Model Selection**:
-  - Groq: `Whisper Large V3 Turbo` (default, faster) or `Whisper Large V3` (most accurate)
+  - Groq: `Whisper Large V3` (default, most accurate) or `Whisper Large V3 Turbo` (faster)
   - OpenAI: `GPT-4o Mini Transcribe` (default, balanced), `GPT-4o Transcribe` (best), or `Whisper V2` (cheapest)
 - **Language** — auto-detect or choose from 25+ languages
+- **Live Typing** (off by default) — types text at natural pauses while you hold the hotkey. Each part is sent with the text before it as context, so a pause in the middle of a sentence does not add a period
 
 ## How It Works
 

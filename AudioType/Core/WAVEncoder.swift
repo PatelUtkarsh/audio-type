@@ -41,6 +41,8 @@ class WhisperAPIEngine: TranscriptionEngine {
 
   var isAvailable: Bool { apiKey != nil && !apiKey!.isEmpty }
 
+  var supportsPrompt: Bool { true }
+
   private var logger: Logger {
     Logger(
       subsystem: "com.audiotype",
@@ -61,8 +63,17 @@ class WhisperAPIEngine: TranscriptionEngine {
   }
 
   func setApiKey(_ key: String) throws {
-    try KeychainHelper.save(key: config.keychainKey, value: key)
+    try KeychainHelper.save(key: config.keychainKey, value: Self.normalizedApiKey(key))
     EngineResolver.invalidateCache()
+  }
+
+  /// The key to store, without surrounding whitespace: a key pasted with a
+  /// trailing newline breaks the Authorization header. Throws when nothing
+  /// is left, so Settings never reports an empty key as configured.
+  static func normalizedApiKey(_ key: String) throws -> String {
+    let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { throw WhisperAPIError.emptyApiKey }
+    return trimmed
   }
 
   func clearApiKey() {
@@ -72,7 +83,7 @@ class WhisperAPIEngine: TranscriptionEngine {
 
   // MARK: - TranscriptionEngine
 
-  func transcribe(samples: [Float]) async throws -> String {
+  func transcribe(samples: [Float], context: TranscriptionContext) async throws -> String {
     guard let apiKey = apiKey, !apiKey.isEmpty else {
       throw WhisperAPIError.apiKeyNotConfigured(config.providerName)
     }
@@ -95,26 +106,21 @@ class WhisperAPIEngine: TranscriptionEngine {
       apiKey: apiKey,
       wavData: wavData,
       model: currentModel,
-      languageCode: TranscriptionLanguage.current.isoCode
+      languageCode: TranscriptionLanguage.current.isoCode,
+      prompt: context.precedingText
     )
 
-    let (data, response): (Data, URLResponse)
-    do {
-      // upload(for:from:) keeps a single copy of the body; setting
-      // request.httpBody and calling data(for:) tends to keep the body
-      // resident in two places. With ~2 MB WAV bodies this matters.
-      (data, response) = try await URLSession.shared.upload(for: request, from: body)
-    } catch {
-      throw WhisperAPIError.networkError(error.localizedDescription)
-    }
+    var (data, httpResponse) = try await send(request, body: body)
 
-    guard let httpResponse = response as? HTTPURLResponse else {
-      throw WhisperAPIError.invalidResponse
+    // One retry for a short rate-limit wait (for example a burst of Live
+    // Typing chunks against Groq's 20 requests per minute).
+    if httpResponse.statusCode == 429, let delay = Self.retryDelay(for: httpResponse) {
+      logger.info(
+        "\(self.config.providerName) rate limited; retrying in \(delay, format: .fixed(precision: 1))s"
+      )
+      try await Task.sleep(for: .seconds(delay))
+      (data, httpResponse) = try await send(request, body: body)
     }
-
-    logger.info(
-      "\(self.config.providerName) HTTP \(httpResponse.statusCode)"
-    )
 
     switch httpResponse.statusCode {
     case 200:
@@ -139,6 +145,42 @@ class WhisperAPIEngine: TranscriptionEngine {
       throw WhisperAPIError.invalidResponse
     }
   }
+
+  // MARK: - HTTP
+
+  /// Longest `retry-after` wait worth taking. A longer wait would stall
+  /// Live Typing, so the request fails instead.
+  private static let maxRetryDelay: TimeInterval = 5
+
+  /// Seconds to wait before retrying a 429 response: the `retry-after`
+  /// header, or 1s when it is missing or not a number. Nil when the wait
+  /// is longer than `maxRetryDelay`.
+  private static func retryDelay(for response: HTTPURLResponse) -> TimeInterval? {
+    let header = response.value(forHTTPHeaderField: "Retry-After")
+    let delay = header.flatMap { TimeInterval($0.trimmingCharacters(in: .whitespaces)) } ?? 1
+    return delay <= maxRetryDelay ? max(delay, 0) : nil
+  }
+
+  private func send(_ request: URLRequest, body: Data) async throws -> (Data, HTTPURLResponse) {
+    let (data, response): (Data, URLResponse)
+    do {
+      // upload(for:from:) keeps a single copy of the body; setting
+      // request.httpBody and calling data(for:) tends to keep the body
+      // resident in two places. With ~2 MB WAV bodies this matters.
+      (data, response) = try await URLSession.shared.upload(for: request, from: body)
+    } catch {
+      throw WhisperAPIError.networkError(error.localizedDescription)
+    }
+
+    guard let httpResponse = response as? HTTPURLResponse else {
+      throw WhisperAPIError.invalidResponse
+    }
+
+    logger.info(
+      "\(self.config.providerName) HTTP \(httpResponse.statusCode)"
+    )
+    return (data, httpResponse)
+  }
 }
 
 // MARK: - Response
@@ -151,6 +193,7 @@ private struct WhisperTranscriptionResponse: Decodable {
 
 enum WhisperAPIError: Error, LocalizedError {
   case apiKeyNotConfigured(String)
+  case emptyApiKey
   case invalidURL
   case networkError(String)
   case httpError(Int, String)
@@ -162,6 +205,8 @@ enum WhisperAPIError: Error, LocalizedError {
     switch self {
     case .apiKeyNotConfigured(let name):
       return "\(name) API key not configured. Open Settings to add your key."
+    case .emptyApiKey:
+      return "The API key is empty."
     case .invalidURL:
       return "Invalid API endpoint URL."
     case .networkError(let message):
@@ -275,12 +320,17 @@ enum WAVEncoder {
   ///
   /// Returns the request and body separately so callers can pass the body
   /// to `URLSession.upload(for:from:)` instead of setting `httpBody`.
+  ///
+  /// `prompt` is the text that came before this audio. The OpenAI guide
+  /// recommends the preceding segment's transcript as the prompt when audio
+  /// is split; Groq allows up to 224 tokens.
   static func buildRequest(
     url: URL,
     apiKey: String,
     wavData: Data,
     model: String,
     languageCode: String?,
+    prompt: String? = nil,
     timeoutInterval: TimeInterval = 30
   ) -> (URLRequest, Data) {
     let boundary = UUID().uuidString
@@ -309,6 +359,11 @@ enum WAVEncoder {
     if let langCode = languageCode {
       body.appendFormField(
         boundary: boundary, name: "language", value: langCode
+      )
+    }
+    if let prompt = prompt, !prompt.isEmpty {
+      body.appendFormField(
+        boundary: boundary, name: "prompt", value: prompt
       )
     }
     body.appendFormField(

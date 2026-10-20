@@ -66,23 +66,24 @@ A native macOS application providing instant voice-to-text functionality.
 Important behaviours:
 
 - **Engine pinning:** `EngineResolver.resolve()` is called once at `startRecording`; the same engine instance is reused for the matching `transcribe` call. This keeps Keychain/availability checks off the post-stop hot path and prevents the engine identity from changing mid-recording if the user edits settings.
-- **Cancellation on re-trigger:** the in-flight `transcriptionTask` is cancelled when a new recording starts, so stale text from a previous (slow) transcription never lands in the user's new context.
+- **Chunk tasks:** each chunk (Live Typing cut or final tail) is one task. It waits up to 1.5 s for the chunk before it (so a slow request does not hold up every later one), transcribes with `TranscriptionContext.precedingText` (from `LiveChunkJoiner.prompt()`), then waits for the previous task and types the result, so text lands in spoken order. The tasks are cancelled, and a `sessionID` check makes old work inert, when a new recording starts or a recording is cancelled, so stale text never lands in the user's new context.
 - **Minimum 0.5 s processing indicator:** if transcription returns faster, the manager sleeps the remainder so the UI flash isn't jarring.
-- **Trailing space:** post-processed text is inserted with a trailing space.
-- **Auto-reset on error:** errors auto-clear back to `.idle` after 2 s.
-- **Engine-config notifications:** `onEngineConfigChanged()` (alias `onApiKeyChanged()`) is called by Settings/Onboarding to re-resolve the active engine and clear/raise the "no engine available" error.
+- **Closing the dictation:** a period still held back by `LiveChunkJoiner` and one trailing space are typed when the session ends.
+- **Errors:** the first chunk failure of a session is shown when the session ends, with its real reason (HTTP errors show only the status code), for 5 s. An error state never blocks a new recording. An empty Apple Speech result is not an error.
+- **Discarded holds:** a hotkey hold shorter than 0.3 s, or one that `HotKeyManager` marks as a shortcut and that has less than 1 s of audio above the pause level, is discarded without transcription unless Live Typing already sent a chunk.
+- **Engine-config notifications:** `onEngineConfigChanged()` (alias `onApiKeyChanged()`) is called by Settings/Onboarding to re-resolve the active engine and clear/raise the "no engine available" error. It does not change the state of a session in progress.
 
 ### 1. HotKey Manager
 
 **Purpose:** Listen for global keyboard shortcuts to trigger recording.
 
 **Technology:**
-- `CGEvent` tap for global hotkey detection
-- Runs on a dedicated background thread
+- `CGEvent` tap for global hotkey detection, listen-only when the Input Monitoring grant is present (active tap as a fallback)
+- The tap's run loop source is on the main run loop
 
-**Default Hotkey:** Hold `fn` key
+**Default Hotkey:** Hold `fn` key (configurable, see `HotKeyBinding`)
 
-The tap fires on `flagsChanged`. Recording only starts when `fn` is held alone — if Command, Shift, Option, or Control are also pressed, the event is ignored so the user can still use system fn-modified shortcuts.
+The tap fires on `flagsChanged` for the bound key. `HotKeyHoldState` (pure, unit-tested) turns flag changes into `.keyDown` / `.keyUp(otherKeyPressed:)` / `.cancel`. A listen-only tap also receives `keyDown`: a key pressed within 1 s of the press (not autorepeat) marks the hold as a shortcut (fn+Delete, fn+arrow), and `TranscriptionManager` discards it when it has little speech. Key events that AudioType posts carry a `SyntheticKeyEvent` mark and do not count. A binding change during a hold sends `.cancel`.
 
 **States:**
 - Idle -> Recording (on key down)
@@ -125,7 +126,13 @@ The app uses a **protocol-based engine abstraction** with a shared base class to
 protocol TranscriptionEngine {
     var displayName: String { get }
     var isAvailable: Bool { get }
-    func transcribe(samples: [Float]) async throws -> String
+    var supportsPrompt: Bool { get }  // sends context.precedingText to the model
+    func transcribe(samples: [Float], context: TranscriptionContext) async throws -> String
+}
+
+struct TranscriptionContext {
+    var precedingText: String?  // end of the text typed so far; cloud engines send it as `prompt`
+    var isPartial: Bool         // one Live Typing chunk, not the whole dictation
 }
 ```
 
@@ -221,13 +228,14 @@ Subclasses only need to override `config` (with `WhisperAPIConfig`) and `current
 - Converts `[Float]` PCM samples into an `AVAudioPCMBuffer`
 - Feeds the buffer to `SFSpeechAudioBufferRecognitionRequest`
 - Prefers on-device recognition (`requiresOnDeviceRecognition = true`) when supported
-- Falls back to server-based Apple recognition if on-device is unavailable
+- Falls back to server-based Apple recognition if on-device is unavailable (audio then goes to Apple's servers)
+- Sets `addsPunctuation` for a whole dictation; a Live Typing chunk (`context.isPartial`) stays unpunctuated, because Apple Speech takes no prompt and its chunk-end periods could not be told apart from real ones
 - Maps the app's `TranscriptionLanguage` to a `Locale` for the recognizer
 - Requests authorization on first use if status is `.notDetermined`
 
 ```swift
 class AppleSpeechEngine: TranscriptionEngine {
-    func transcribe(samples: [Float]) async throws -> String
+    func transcribe(samples: [Float], context: TranscriptionContext) async throws -> String
     static var isSupported: Bool
     static func requestAuthorization() async -> Bool
 }
@@ -255,12 +263,12 @@ class AppleSpeechEngine: TranscriptionEngine {
 
 **Purpose:** Clean up and correct transcribed text.
 
-- Fixes common misheard tech terms (e.g. "git hub" -> "GitHub")
-- Capitalizes first letter of sentences
-- Supports voice commands ("new line", "period", etc.)
+- Fixes common misheard tech terms (e.g. "git hub" -> "GitHub"), whole words only
+- Capitalizes the first letter of a sentence: after ".", "!" or "?" followed by whitespace, or after a newline; never after a dot inside a token ("Node.js", "3.5"), an ellipsis or an abbreviation with an inner dot ("e.g."). It never lowercases.
+- Supports voice commands that are rare in normal speech ("new line", "new paragraph", "question mark"). Keys that are also normal words ("period", "comma", "colon", "jason", "sequel") are left out on purpose.
 - User-defined custom word replacements (persisted in UserDefaults under `customWordReplacements`)
 
-**Implementation:** Singleton (`TextPostProcessor.shared`). Built-in and custom replacement catalogs are merged and compiled into a single `NSRegularExpression` (longest-key-first to ensure "rest api" beats "api"), with a lookup table for replacement strings. The cached regex is rebuilt only when custom replacements change. A single regex pass replaces previous ~85 case-insensitive scans per transcription.
+**Implementation:** Singleton (`TextPostProcessor.shared`). Built-in and custom replacement catalogs are merged and compiled into a single `NSRegularExpression` wrapped in word boundaries (longest-key-first to ensure "rest api" beats "api"), with a lookup table for replacement strings. The cached regex is rebuilt only when custom replacements change. A single regex pass replaces previous ~85 case-insensitive scans per transcription.
 
 ---
 
@@ -271,8 +279,8 @@ class AppleSpeechEngine: TranscriptionEngine {
 **Technology:**
 - Two strategies, chosen by length (threshold: 30 characters):
   - **Short text (≤30 chars):** synthesise per-character `CGEvent` keystrokes with `keyboardSetUnicodeString`, posted to `.cgSessionEventTap` with a 1 ms inter-key delay so target apps don't drop events. The `CGEventSource` is built once per insertion (cached) — creating one per character was a measurable hot path.
-  - **Long text (>30 chars):** save the current pasteboard contents, write the text to `NSPasteboard.general`, synthesise Cmd+V via `CGEvent`, then restore the previous clipboard ~100 ms later. Per-char synthesis was the dominant post-recording latency for long dictations.
-- All events posted to `.cgSessionEventTap` for system-wide injection.
+  - **Long text (>30 chars):** save every item and type on the pasteboard, write the text to `NSPasteboard.general`, synthesise Cmd+V via `CGEvent`. The pasteboard does not change again for 250 ms, so the target app can read it; back-to-back pastes (Live Typing) wait for that and keep the clipboard saved at the first paste. The user's clipboard is restored once, 250 ms after the last paste, unless the user copied something new. Per-char synthesis was the dominant post-recording latency for long dictations.
+- All events posted to `.cgSessionEventTap` for system-wide injection, marked with `SyntheticKeyEvent` so the hotkey listener can ignore them.
 
 **Permissions Required:**
 - Accessibility access (`AXIsProcessTrusted()`)
@@ -320,9 +328,12 @@ AudioType/
 |   |   +-- TranscriptionManager.swift  # Orchestrates record -> transcribe -> insert
 |   |
 |   |-- Core/
-|   |   |-- HotKeyManager.swift         # Global hotkey handling
+|   |   |-- HotKeyManager.swift         # Global hotkey handling, HotKeyHoldState
+|   |   |-- HotKeyBinding.swift         # Configurable hotkey bindings
 |   |   |-- AudioRecorder.swift         # Microphone capture
-|   |   |-- TranscriptionEngine.swift   # Protocol, EngineType enum, EngineResolver
+|   |   |-- SpeechPauseDetector.swift   # Live Typing: where to cut chunks
+|   |   |-- LiveChunkJoiner.swift       # Live Typing: joins chunks, removes pause-cut periods, prompt
+|   |   |-- TranscriptionEngine.swift   # Protocol, TranscriptionContext, EngineType enum, EngineResolver
 |   |   |-- WAVEncoder.swift            # WhisperAPIEngine base class, WAVEncoder, config, errors
 |   |   |-- GroqEngine.swift            # GroqEngine subclass, GroqModel, TranscriptionLanguage
 |   |   |-- OpenAIEngine.swift          # OpenAIEngine subclass, OpenAIModel
@@ -339,9 +350,6 @@ AudioType/
 |   |-- Utilities/
 |   |   |-- Permissions.swift           # Mic, Accessibility, Speech Recognition helpers
 |   |   +-- KeychainHelper.swift        # macOS Keychain-based secret storage
-|   |
-|   +-- Resources/
-|       +-- Assets.xcassets
 |
 |-- Resources/
 |   |-- Info.plist
@@ -459,14 +467,15 @@ User releases fn key
 |-------|-------|------------|
 | API key not configured | User hasn't set key (cloud mode) | Fall back to Apple Speech in Auto; show settings prompt in explicit mode |
 | Unauthorized (401) | Invalid API key | Prompt to check key in Settings |
-| Rate limited (429) | Too many requests | Auto-retry after delay, show message |
+| Rate limited (429) | Too many requests | Retry once when `retry-after` is 5 s or less (1 s if missing), then show the reason |
 | Network error | No internet (cloud engines) | Show error, auto-reset to idle |
 | Speech not authorized | User denied speech recognition | Request authorization on next attempt; show Settings link |
 | Speech not available | SFSpeechRecognizer unavailable | Show error, suggest configuring a cloud API key |
 | No microphone permission | User denied | Show onboarding with Settings link |
 | No accessibility permission | User didn't enable | Show alert with Settings button |
 | No engine available | No cloud key AND speech denied | Show error prompting to configure either |
-| Transcription failed | Engine error | Log error, show "Try again", auto-reset |
+| Transcription failed | Engine error | Log error, show the reason when the session ends (5 s), note when other Live Typing chunks were typed |
+| Microphone did not start | No input device, device switch | Show "Could not start the microphone"; the next press tries again |
 
 ---
 

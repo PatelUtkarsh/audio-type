@@ -40,6 +40,9 @@ class AppleSpeechEngine: TranscriptionEngine {
 
   var displayName: String { "Apple Speech" }
 
+  /// SFSpeechRecognizer has no prompt; `context.precedingText` is ignored.
+  var supportsPrompt: Bool { false }
+
   var isAvailable: Bool {
     guard let recognizer = SFSpeechRecognizer() else { return false }
     return recognizer.isAvailable
@@ -66,7 +69,7 @@ class AppleSpeechEngine: TranscriptionEngine {
 
   // MARK: - TranscriptionEngine
 
-  func transcribe(samples: [Float]) async throws -> String {
+  func transcribe(samples: [Float], context: TranscriptionContext) async throws -> String {
     // Check (and request if needed) authorization
     var status = SFSpeechRecognizer.authorizationStatus()
     if status == .notDetermined {
@@ -100,6 +103,10 @@ class AppleSpeechEngine: TranscriptionEngine {
     // Build an audio buffer request and feed the recorded samples
     let request = SFSpeechAudioBufferRecognitionRequest()
     request.shouldReportPartialResults = false
+    // Punctuate a whole dictation. A Live Typing part stays unpunctuated:
+    // Apple Speech takes no prompt, so a period at each pause cut could not
+    // be told apart from a real sentence end.
+    request.addsPunctuation = !context.isPartial
     if recognizer.supportsOnDeviceRecognition {
       request.requiresOnDeviceRecognition = true
     }
@@ -117,6 +124,14 @@ class AppleSpeechEngine: TranscriptionEngine {
 
         if let error = error {
           hasResumed = true
+          // Silent audio comes back as an error ("No speech detected"), not
+          // as an empty result. Report it as no result, which is not a
+          // failure.
+          let nsError = error as NSError
+          if nsError.domain == "kAFAssistantErrorDomain" && nsError.code == 1110 {
+            continuation.resume(throwing: AppleSpeechError.noResult)
+            return
+          }
           let msg = error.localizedDescription
           continuation.resume(
             throwing: AppleSpeechError.recognitionFailed(msg)

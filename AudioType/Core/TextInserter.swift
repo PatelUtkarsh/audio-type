@@ -3,7 +3,22 @@ import Carbon
 import Foundation
 import os.log
 
-class TextInserter {
+/// Marks the key events that AudioType posts, so its own hotkey listener can
+/// tell them from the user's typing.
+enum SyntheticKeyEvent {
+  private static let userData: Int64 = 0x4155_4449_4F54  // "AUDIOT"
+
+  static func mark(_ event: CGEvent) {
+    event.setIntegerValueField(.eventSourceUserData, value: userData)
+  }
+
+  static func isMarked(_ event: CGEvent) -> Bool {
+    event.getIntegerValueField(.eventSourceUserData) == userData
+  }
+}
+
+@MainActor
+final class TextInserter {
   private let logger = Logger(subsystem: "com.audiotype", category: "TextInserter")
 
   /// Above this length we paste via clipboard instead of synthesising one
@@ -12,13 +27,46 @@ class TextInserter {
   /// post-recording latency the user feels.
   private static let clipboardPasteThreshold = 30
 
-  func insertText(_ text: String) {
+  private let pasteboard: NSPasteboard
+
+  /// Time the target app gets to read the pasteboard after Cmd+V. The
+  /// pasteboard does not change again before this. The user's clipboard
+  /// comes back twice this long after the last paste, so a chunk that
+  /// follows at once joins the burst instead of racing the restore.
+  private let pasteSettleDelay: Duration
+
+  /// Marks the pasted text as temporary, so clipboard managers do not
+  /// record each dictated chunk (nspasteboard.org convention).
+  private static let transientType = NSPasteboard.PasteboardType("org.nspasteboard.TransientType")
+
+  private let postPaste: () -> Void
+
+  /// The user's clipboard, saved at the first paste of a burst of pastes
+  /// and restored once after the last one.
+  private var savedClipboard: [NSPasteboardItem] = []
+  private var restoreTask: Task<Void, Never>?
+  private var lastPasteTime: ContinuousClock.Instant?
+  private var pastedChangeCount = 0
+
+  /// - Parameter postPaste: Sends Cmd+V. Tests replace it so no key events
+  ///   are posted.
+  init(
+    pasteboard: NSPasteboard = .general,
+    pasteSettleDelay: Duration = .milliseconds(250),
+    postPaste: (() -> Void)? = nil
+  ) {
+    self.pasteboard = pasteboard
+    self.pasteSettleDelay = pasteSettleDelay
+    self.postPaste = postPaste ?? { TextInserter.simulatePaste() }
+  }
+
+  func insertText(_ text: String) async {
     guard !text.isEmpty else { return }
 
     logger.info("Inserting text: \(text.prefix(50))...")
 
     if text.count > Self.clipboardPasteThreshold {
-      insertTextViaClipboard(text)
+      await insertTextViaClipboard(text)
     } else {
       insertTextViaKeystrokes(text)
     }
@@ -64,37 +112,83 @@ class TextInserter {
     // characters into modified keystrokes in some apps.
     keyDown.flags = []
     keyUp.flags = []
+    SyntheticKeyEvent.mark(keyDown)
+    SyntheticKeyEvent.mark(keyUp)
 
     // Post events
     keyDown.post(tap: .cgSessionEventTap)
     keyUp.post(tap: .cgSessionEventTap)
   }
 
-  /// Insert text using clipboard (faster for long text, but replaces clipboard)
-  func insertTextViaClipboard(_ text: String) {
-    guard !text.isEmpty else { return }
-
-    // Save current clipboard content
-    let pasteboard = NSPasteboard.general
-    let oldContent = pasteboard.string(forType: .string)
-
-    // Set new content
-    pasteboard.clearContents()
-    pasteboard.setString(text, forType: .string)
-
-    // Simulate Cmd+V
-    simulatePaste()
-
-    // Restore old clipboard after a delay
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-      if let oldContent = oldContent {
-        pasteboard.clearContents()
-        pasteboard.setString(oldContent, forType: .string)
+  /// Insert text using clipboard (faster for long text, but replaces
+  /// clipboard). Live Typing can paste two chunks back to back: the second
+  /// paste waits until the target app had time to read the first, and the
+  /// user's clipboard comes back once, after the last paste. Before, the
+  /// second chunk replaced the pasteboard before the app read the first
+  /// one, so it could paste twice while the first was lost.
+  private func insertTextViaClipboard(_ text: String) async {
+    if let lastPasteTime = lastPasteTime {
+      let wait = pasteSettleDelay - (ContinuousClock.now - lastPasteTime)
+      if wait > .zero {
+        try? await Task.sleep(for: wait)
       }
+    }
+    // A cancelled session must not paste stale text.
+    guard !Task.isCancelled else { return }
+
+    // Part of a burst while the pasteboard still holds our last paste: the
+    // clipboard saved at the first paste stays. If anything was copied
+    // since, that is the clipboard to keep.
+    let burstContinues = restoreTask != nil && pasteboard.changeCount == pastedChangeCount
+    restoreTask?.cancel()
+    if !burstContinues {
+      savedClipboard = Self.snapshot(of: pasteboard)
+    }
+
+    let item = NSPasteboardItem()
+    item.setString(text, forType: .string)
+    item.setData(Data(), forType: Self.transientType)
+    pasteboard.clearContents()
+    pasteboard.writeObjects([item])
+    pastedChangeCount = pasteboard.changeCount
+    postPaste()
+    lastPasteTime = .now
+
+    restoreTask = Task { [weak self, restoreDelay = pasteSettleDelay * 2] in
+      try? await Task.sleep(for: restoreDelay)
+      guard !Task.isCancelled else { return }
+      self?.restoreClipboard()
     }
   }
 
-  private func simulatePaste() {
+  private func restoreClipboard() {
+    defer {
+      savedClipboard = []
+      restoreTask = nil
+    }
+    // The user copied something new after our paste: keep it.
+    guard pasteboard.changeCount == pastedChangeCount else { return }
+    pasteboard.clearContents()
+    if !savedClipboard.isEmpty {
+      pasteboard.writeObjects(savedClipboard)
+    }
+  }
+
+  /// Copies every item with every type, not only plain text, so images,
+  /// files and rich text survive the paste.
+  private static func snapshot(of pasteboard: NSPasteboard) -> [NSPasteboardItem] {
+    (pasteboard.pasteboardItems ?? []).map { item in
+      let copy = NSPasteboardItem()
+      for type in item.types {
+        if let data = item.data(forType: type) {
+          copy.setData(data, forType: type)
+        }
+      }
+      return copy
+    }
+  }
+
+  private static func simulatePaste() {
     let source = CGEventSource(stateID: .hidSystemState)
 
     // V key is keycode 9
@@ -109,6 +203,8 @@ class TextInserter {
     // Add Command modifier
     keyDown.flags = .maskCommand
     keyUp.flags = .maskCommand
+    SyntheticKeyEvent.mark(keyDown)
+    SyntheticKeyEvent.mark(keyUp)
 
     keyDown.post(tap: .cgSessionEventTap)
     keyUp.post(tap: .cgSessionEventTap)

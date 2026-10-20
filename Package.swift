@@ -15,9 +15,6 @@ let package = Package(
             name: "AudioType",
             dependencies: [],
             path: "AudioType",
-            resources: [
-                .process("Resources")
-            ],
             linkerSettings: [
                 .linkedFramework("AVFoundation"),
                 .linkedFramework("CoreAudio"),

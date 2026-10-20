@@ -60,7 +60,7 @@ class OpenAIEngine: WhisperAPIEngine {
   }
 
   static func setApiKey(_ key: String) throws {
-    try KeychainHelper.save(key: openAIConfig.keychainKey, value: key)
+    try KeychainHelper.save(key: openAIConfig.keychainKey, value: normalizedApiKey(key))
     EngineResolver.invalidateCache()
   }
 

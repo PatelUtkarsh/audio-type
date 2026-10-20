@@ -4,17 +4,16 @@ import Foundation
 class TextPostProcessor {
   static let shared = TextPostProcessor()
 
-  // Common misheard words/phrases and their corrections
-  // These are case-insensitive replacements
+  // Common misheard words/phrases and their corrections.
+  // Case-insensitive, whole-word replacements. Keys that are also normal
+  // English words or phrases ("jason", "sequel", "big hub", "period") are
+  // left out on purpose: they changed ordinary sentences.
   private var wordReplacements: [String: String] = [
     // Tech terms often misheard
-    "bit of action": "GitHub",
     "git hub": "GitHub",
     "get hub": "GitHub",
     "gith hub": "GitHub",
-    "big hub": "GitHub",
     "kick hub": "GitHub",
-    "good hub": "GitHub",
     "j query": "jQuery",
     "jake weary": "jQuery",
     "java script": "JavaScript",
@@ -28,7 +27,6 @@ class TextPostProcessor {
     "post gress": "Postgres",
     "post grass": "Postgres",
     "postgres q l": "PostgreSQL",
-    "my sequel": "MySQL",
     "redis": "Redis",
     "docker": "Docker",
     "cooper net ease": "Kubernetes",
@@ -42,12 +40,10 @@ class TextPostProcessor {
     "a p i": "API",
     "rest api": "REST API",
     "graph q l": "GraphQL",
-    "graphical": "GraphQL",
     "c i c d": "CI/CD",
     "c i d d": "CI/CD",
 
     // Programming terms
-    "jason": "JSON",
     "j son": "JSON",
     "html": "HTML",
     "h t m l": "HTML",
@@ -55,8 +51,6 @@ class TextPostProcessor {
     "c s s": "CSS",
     "sql": "SQL",
     "s q l": "SQL",
-    "sequel": "SQL",
-    "no sequel": "NoSQL",
     "http": "HTTP",
     "h t t p": "HTTP",
     "https": "HTTPS",
@@ -84,16 +78,14 @@ class TextPostProcessor {
     "couldn't": "couldn't",
     "shouldn't": "shouldn't",
 
-    // Commands
+    // Commands. Only phrases that are rare in normal speech; the cloud
+    // models already add punctuation.
     "new line": "\n",
     "newline": "\n",
     "new paragraph": "\n\n",
-    "period": ".",
-    "comma": ",",
     "question mark": "?",
     "exclamation mark": "!",
     "exclamation point": "!",
-    "colon": ":",
     "semicolon": ";",
     "open parenthesis": "(",
     "close parenthesis": ")",
@@ -165,10 +157,12 @@ class TextPostProcessor {
 
     // Sort keys longest-first so e.g. "rest api" wins over "api". This also
     // gives us a deterministic order independent of dictionary hashing,
-    // which the old implementation lacked.
+    // which the old implementation lacked. Word boundaries stop a key from
+    // matching inside a longer word ("api" in "rapid", "aws" in "laws").
     let keys = merged.keys.sorted { $0.count > $1.count }
-    let pattern = keys.map { NSRegularExpression.escapedPattern(for: $0) }
+    let alternatives = keys.map { NSRegularExpression.escapedPattern(for: $0) }
       .joined(separator: "|")
+    let pattern = "\\b(?:\(alternatives))\\b"
 
     cachedRegex = try? NSRegularExpression(
       pattern: pattern,
@@ -217,24 +211,53 @@ class TextPostProcessor {
     return result
   }
 
+  /// Characters that can come before the first letter of a sentence.
+  private static let sentenceOpeners: Set<Character> = ["\"", "'", "“", "‘", "(", "[", "«", "¿", "¡"]
+
+  /// Uppercases the first letter of each sentence; never lowercases. A
+  /// sentence starts at a newline, or after ".", "!" or "?" that a space
+  /// follows. A dot inside a token ("Node.js", "3.5", "example.com"), an
+  /// ellipsis, or an abbreviation with an inner dot ("e.g.") does not end
+  /// a sentence.
   private func capitalizeSentences(_ text: String, capitalizeFirst: Bool) -> String {
+    let chars = Array(text)
     var result = ""
+    result.reserveCapacity(text.count)
     var capitalizeNext = capitalizeFirst
 
-    for char in text {
+    for (index, char) in chars.enumerated() {
       if capitalizeNext && char.isLetter {
-        result.append(char.uppercased())
+        result.append(contentsOf: char.uppercased())
         capitalizeNext = false
-      } else {
-        result.append(char)
+        continue
       }
+      result.append(char)
 
-      if char == "." || char == "!" || char == "?" || char == "\n" {
+      if char == "\n" || Self.endsSentence(chars, at: index) {
         capitalizeNext = true
+      } else if capitalizeNext && !char.isWhitespace && !Self.sentenceOpeners.contains(char) {
+        // The sentence starts with a digit or symbol; leave the next word alone.
+        capitalizeNext = false
       }
     }
 
     return result
+  }
+
+  private static func endsSentence(_ chars: [Character], at index: Int) -> Bool {
+    let char = chars[index]
+    guard char == "." || char == "!" || char == "?" else { return false }
+    guard index + 1 < chars.count, chars[index + 1].isWhitespace else { return false }
+    guard char == "." else { return true }
+
+    // Walk back over the token that ends with this dot. Another dot in it
+    // means an ellipsis ("...") or an abbreviation ("e.g.", "U.S.").
+    var cursor = index - 1
+    while cursor >= 0 && !chars[cursor].isWhitespace {
+      if chars[cursor] == "." { return false }
+      cursor -= 1
+    }
+    return true
   }
 
   private func loadCustomReplacements() {

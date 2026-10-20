@@ -88,9 +88,16 @@ class AudioRecorder {
       self?.processAudioBuffer(buffer, converter: converter, targetFormat: targetFormat)
     }
 
-    // Start audio engine
+    // Start audio engine. On failure, release the tap and the engine so the
+    // next attempt starts clean.
     engine.prepare()
-    try engine.start()
+    do {
+      try engine.start()
+    } catch {
+      inputNode.removeTap(onBus: 0)
+      audioEngine = nil
+      throw error
+    }
 
     isRecording = true
     logger.info("Recording started")
@@ -148,9 +155,13 @@ class AudioRecorder {
     _ buffer: AVAudioPCMBuffer, converter: AVAudioConverter?, targetFormat: AVAudioFormat
   ) {
     if let converter = converter {
-      let frameCount = AVAudioFrameCount(
-        Double(buffer.frameLength) * Self.targetSampleRate / buffer.format.sampleRate
-      )
+      // Round up and add headroom so the converter can always empty its
+      // internal backlog; a truncated capacity left a fraction of a frame
+      // behind on every call.
+      let frameCount =
+        AVAudioFrameCount(
+          (Double(buffer.frameLength) * Self.targetSampleRate / buffer.format.sampleRate)
+            .rounded(.up)) + 64
 
       guard
         let convertedBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: frameCount)
@@ -159,8 +170,18 @@ class AudioRecorder {
         return
       }
 
+      // Hand the tap buffer to the converter exactly once. The converter
+      // can ask for input more than once per call; returning the same
+      // buffer again duplicated ~85 ms of audio, and the drift it caused
+      // later made a call take no input, which dropped a buffer.
       var error: NSError?
+      var bufferConsumed = false
       let inputBlock: AVAudioConverterInputBlock = { _, outStatus in
+        if bufferConsumed {
+          outStatus.pointee = .noDataNow
+          return nil
+        }
+        bufferConsumed = true
         outStatus.pointee = .haveData
         return buffer
       }
